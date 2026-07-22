@@ -1,0 +1,5 @@
+# Scheduled Tasks get structured weekday/time fields; Flexible Tasks stay free text
+
+Every Task's Frequency could have been stored as free text and left entirely to the Planner's LLM to interpret each week, including exact commitments like a Tuesday 16:00–19:00 training session. Instead, only Tasks with a genuine fixed weekday/time (Scheduled Tasks) get structured fields (weekday, start, end, recurrence); Tasks with vague or approximate frequency (Flexible Tasks, e.g. "clean the windows about every three months") remain pure free text with no time slot.
+
+We chose this split because a fixed commitment like a training session needs reliable, mechanical placement — including overriding Mode's assumed-busy hours — which an LLM re-parsing free text every week can't guarantee. Chores don't have that requirement: their timing is genuinely flexible, so forcing structure onto them would add schema complexity for no placement benefit. The Planner still reads free text for *what* to do (e.g. the training program's content) even on a Scheduled Task — only *when* is structured.
