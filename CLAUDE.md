@@ -39,6 +39,12 @@ pnpm test    # must exit 0
 - The Planner talks to Ollama only through the single client wrapper `src/lib/ollama/client.ts` (`callOllama`) — no other code calls Ollama directly.
 - Each Planner run is recorded as a heartbeat row in the `planner_run` table (`ran_at`/`status`/`result`) and surfaced through the placeholder API/page.
 
+## Docker Compose (local dev)
+
+- `docker-compose.yml` runs the app alongside a real Ollama container so the Planner exercises the actual Ollama path. See the README's "Local development (with Docker Compose)" section for usage.
+- The `ollama` service (`docker/ollama/`) pulls `OLLAMA_MODEL` on its own startup via a custom entrypoint and only reports healthy once the pull finishes; the `app` service depends on that health check so it never starts against a model-less Ollama.
+- SQLite data and the pulled Ollama model each live in their own named volume (`sqlite-data`, `ollama-data`) so both survive `docker compose down` / `up`.
+
 ## Agent skills
 
 ### Issue tracker

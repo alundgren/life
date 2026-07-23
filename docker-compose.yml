@@ -1,0 +1,39 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      SQLITE_DB_PATH: /app/data/life.db
+      OLLAMA_HOST: http://ollama:11434
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+      - sqlite-data:/app/data
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  ollama:
+    build:
+      context: ./docker/ollama
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/model-ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 30m
+
+volumes:
+  sqlite-data:
+  ollama-data:

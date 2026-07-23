@@ -17,6 +17,22 @@ pnpm dev
 
 The app is available at [http://localhost:3000](http://localhost:3000). On startup the app validates required environment variables and applies any pending SQLite migrations automatically.
 
+## Local development (with Docker Compose)
+
+Brings up the app alongside a real Ollama instance, so the Planner talks to actual Ollama instead of failing to connect.
+
+```bash
+cp .env.example .env   # required before the first `docker compose up`
+docker compose up
+```
+
+The app is available at [http://localhost:3000](http://localhost:3000).
+
+- On every startup, the `ollama` service pulls the model named by `OLLAMA_MODEL` in `.env` before the `app` service starts — no manual `ollama pull` step. The first pull can take a while depending on the model, and the `app` container waits for it; later restarts re-check the already-pulled model, which is fast.
+- The SQLite file lives in a named volume (`sqlite-data`) and survives `docker compose down` / `up`. The pulled Ollama model lives in its own named volume (`ollama-data`) so it isn't re-downloaded on every restart.
+- The project directory is bind-mounted into the `app` container, so editing source on the host hot-reloads the running dev server. `node_modules` and `.next` stay in anonymous volumes so the container's own (Linux) install isn't shadowed by the host's.
+- Run `docker compose down -v` to also drop the named volumes (fresh database and a re-pulled model on next `up`).
+
 ## Environment variables
 
 See `.env.example` for the full list. The app fails fast at startup with a clear error if a required variable is missing.
