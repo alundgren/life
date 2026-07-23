@@ -16,9 +16,16 @@ Run before declaring a task done; fix any failures first.
 ```bash
 pnpm build   # must exit 0
 pnpm lint    # must exit 0
+pnpm test    # must exit 0
 ```
 
-`pnpm test` will join this gate once a test suite exists (tracked in [#14](https://github.com/alundgren/life/issues/14)).
+`pnpm test` runs the service-free unit suite (`vitest.config.ts`) — no real SQLite file, Docker, or Ollama instance required. `pnpm test:integration` (`vitest.integration.config.ts`) is a separate, currently-empty suite for future tests that need real services; it is not part of the gate.
+
+## Data layer
+
+- SQLite via a `better-sqlite3` singleton (`src/lib/db/client.ts`), WAL mode and foreign keys on. Tests inject an in-memory db via `setDb()`/`resetDb()` instead of going through the real env-backed singleton.
+- Migrations are numbered SQL files under `migrations/` (e.g. `0001_create_placeholder_message.sql`), applied in order by `src/lib/db/migrate.ts` and tracked in a `schema_migrations` table so a file is never re-applied. Migrations are append-only — never edit one after it has merged; add a new one instead.
+- Required environment variables are validated at process start (`src/lib/env.ts`, invoked from `src/instrumentation.ts` alongside the migration run) so misconfiguration fails fast at boot, not on first request. See `.env.example` for the full list.
 
 ## Agent skills
 
