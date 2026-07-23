@@ -27,6 +27,12 @@ pnpm test    # must exit 0
 - Migrations are numbered SQL files under `migrations/` (e.g. `0001_create_placeholder_message.sql`), applied in order by `src/lib/db/migrate.ts` and tracked in a `schema_migrations` table so a file is never re-applied. Migrations are append-only — never edit one after it has merged; add a new one instead.
 - Required environment variables are validated at process start (`src/lib/env.ts`, invoked from `src/instrumentation.ts` alongside the migration run) so misconfiguration fails fast at boot, not on first request. See `.env.example` for the full list.
 
+## Planner & Ollama
+
+- The Planner (`src/lib/planner/planner.ts`) starts automatically at boot from `src/instrumentation.ts`, right after migrations run. `startPlanner()` / `stopPlanner()` control its lifecycle; `getPlannerStatus()` reports whether it's running and its last recorded run.
+- The Planner talks to Ollama only through the single client wrapper `src/lib/ollama/client.ts` (`callOllama`) — no other code calls Ollama directly.
+- Each Planner run is recorded as a heartbeat row in the `planner_run` table (`ran_at`/`status`/`result`) and surfaced through the placeholder API/page.
+
 ## Agent skills
 
 ### Issue tracker

@@ -1,8 +1,10 @@
 export interface Env {
   SQLITE_DB_PATH: string;
+  OLLAMA_HOST: string;
+  OLLAMA_MODEL: string;
 }
 
-const REQUIRED_VARS = ["SQLITE_DB_PATH"] as const;
+const REQUIRED_VARS = ["SQLITE_DB_PATH", "OLLAMA_HOST", "OLLAMA_MODEL"] as const;
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const missing = REQUIRED_VARS.filter((name) => !source[name]);
@@ -14,6 +16,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
 
   return {
     SQLITE_DB_PATH: source.SQLITE_DB_PATH!,
+    OLLAMA_HOST: source.OLLAMA_HOST!,
+    OLLAMA_MODEL: source.OLLAMA_MODEL!,
   };
 }
 
