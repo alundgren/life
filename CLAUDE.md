@@ -21,6 +21,12 @@ pnpm test    # must exit 0
 
 `pnpm test` runs the service-free unit suite (`vitest.config.ts`) — no real SQLite file, Docker, or Ollama instance required. `pnpm test:integration` (`vitest.integration.config.ts`) is a separate, currently-empty suite for future tests that need real services; it is not part of the gate.
 
+## Pull requests
+
+- Never include a link to the Claude session that created the PR.
+- Keep the description short and to the point.
+- If the PR closes a GitHub issue, link it (e.g. `Closes #123`).
+
 ## Data layer
 
 - SQLite via a `better-sqlite3` singleton (`src/lib/db/client.ts`), WAL mode and foreign keys on. Tests inject an in-memory db via `setDb()`/`resetDb()` instead of going through the real env-backed singleton.
