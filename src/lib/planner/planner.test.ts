@@ -30,7 +30,12 @@ describe("planner lifecycle", () => {
   });
 
   it("starts stopped with no recorded runs", () => {
-    expect(getPlannerStatus()).toEqual({ running: false, lastRunAt: null, lastResult: null });
+    expect(getPlannerStatus()).toEqual({
+      running: false,
+      lastRunAt: null,
+      lastStatus: null,
+      lastResult: null,
+    });
   });
 
   it("records a successful run and reflects it in status", async () => {
@@ -39,6 +44,7 @@ describe("planner lifecycle", () => {
     await runPlannerOnce();
 
     const status = getPlannerStatus();
+    expect(status.lastStatus).toBe("ok");
     expect(status.lastResult).toBe("pong");
     expect(status.lastRunAt).not.toBeNull();
     expect(callOllamaMock).toHaveBeenCalledWith(expect.any(String), {
@@ -52,7 +58,9 @@ describe("planner lifecycle", () => {
 
     await runPlannerOnce();
 
-    expect(getPlannerStatus().lastResult).toBe("connection refused");
+    const status = getPlannerStatus();
+    expect(status.lastStatus).toBe("error");
+    expect(status.lastResult).toBe("connection refused");
   });
 
   it("marks the planner running immediately and runs once right away", async () => {

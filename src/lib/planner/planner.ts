@@ -8,6 +8,7 @@ const RUN_INTERVAL_MS = 15 * 60 * 1000;
 export interface PlannerStatus {
   running: boolean;
   lastRunAt: string | null;
+  lastStatus: "ok" | "error" | null;
   lastResult: string | null;
 }
 
@@ -40,6 +41,7 @@ export function getPlannerStatus(): PlannerStatus {
   return {
     running,
     lastRunAt: row?.ran_at ?? null,
+    lastStatus: (row?.status as "ok" | "error" | undefined) ?? null,
     lastResult: row ? row.result : null,
   };
 }

@@ -23,11 +23,16 @@ describe("GET /api/placeholder", () => {
     );
   });
 
-  it("returns null plannerRun when the Planner has not run yet", async () => {
+  it("returns planner status with no recorded runs", async () => {
     const response = GET();
-    const body = (await response.json()) as { plannerRun: unknown };
+    const body = (await response.json()) as { planner: unknown };
 
-    expect(body.plannerRun).toBeNull();
+    expect(body.planner).toEqual({
+      running: false,
+      lastRunAt: null,
+      lastStatus: null,
+      lastResult: null,
+    });
   });
 
   it("returns the most recent Planner heartbeat", async () => {
@@ -37,13 +42,19 @@ describe("GET /api/placeholder", () => {
 
     const response = GET();
     const body = (await response.json()) as {
-      plannerRun: { ranAt: string; status: string; result: string | null } | null;
+      planner: {
+        running: boolean;
+        lastRunAt: string | null;
+        lastStatus: string | null;
+        lastResult: string | null;
+      };
     };
 
-    expect(body.plannerRun).toEqual({
-      ranAt: "2026-07-23T00:00:00.000Z",
-      status: "ok",
-      result: "pong",
+    expect(body.planner).toEqual({
+      running: false,
+      lastRunAt: "2026-07-23T00:00:00.000Z",
+      lastStatus: "ok",
+      lastResult: "pong",
     });
   });
 });

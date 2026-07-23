@@ -2,8 +2,13 @@
 
 import { useEffect, useState } from "react";
 
-type PlannerRun = { ranAt: string; status: string; result: string | null };
-type PlaceholderResponse = { message: string | null; plannerRun: PlannerRun | null };
+type PlannerStatus = {
+  running: boolean;
+  lastRunAt: string | null;
+  lastStatus: "ok" | "error" | null;
+  lastResult: string | null;
+};
+type PlaceholderResponse = { message: string | null; planner: PlannerStatus };
 
 export default function Home() {
   const [data, setData] = useState<PlaceholderResponse | null>(null);
@@ -20,9 +25,11 @@ export default function Home() {
     <div className="flex flex-1 flex-col items-center justify-center">
       <h1 className="text-2xl font-semibold text-foreground">Life</h1>
       <p className="mt-2 text-muted">{error ?? data?.message ?? "Loading…"}</p>
-      {data?.plannerRun && (
+      {data?.planner && (
         <p className="mt-1 text-sm text-muted">
-          Planner last ran {data.plannerRun.ranAt} ({data.plannerRun.status})
+          Planner: {data.planner.running ? "running" : "stopped"}
+          {data.planner.lastRunAt &&
+            ` — last ran ${data.planner.lastRunAt} (${data.planner.lastStatus})`}
         </p>
       )}
     </div>
