@@ -3,10 +3,17 @@ export async function register() {
     return;
   }
 
-  const { getEnv } = await import("@/lib/env");
-  const { getDb } = await import("@/lib/db/client");
-  const { runMigrations } = await import("@/lib/db/migrate");
+  try {
+    const { getEnv } = await import("@/lib/env");
+    const { getDb } = await import("@/lib/db/client");
+    const { runMigrations } = await import("@/lib/db/migrate");
 
-  getEnv();
-  runMigrations(getDb());
+    getEnv();
+    runMigrations(getDb());
+  } catch (error) {
+    // Fail fast: exit immediately rather than leaving the server bound
+    // and answering requests with 500s while Next.js unwinds the rejection.
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
 }

@@ -2,12 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import type Database from "better-sqlite3";
 
-const DEFAULT_MIGRATIONS_DIR = path.join(process.cwd(), "migrations");
+const MIGRATIONS_DIR = path.join(process.cwd(), "migrations");
 
-export function runMigrations(
-  db: Database.Database,
-  migrationsDir: string = DEFAULT_MIGRATIONS_DIR
-): void {
+export function runMigrations(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       filename TEXT PRIMARY KEY,
@@ -23,7 +20,7 @@ export function runMigrations(
   );
 
   const pendingFiles = fs
-    .readdirSync(migrationsDir)
+    .readdirSync(MIGRATIONS_DIR)
     .filter((file) => file.endsWith(".sql"))
     .sort()
     .filter((file) => !applied.has(file));
@@ -33,7 +30,7 @@ export function runMigrations(
   );
 
   for (const file of pendingFiles) {
-    const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
+    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), "utf8");
     const applyMigration = db.transaction(() => {
       db.exec(sql);
       recordMigration.run(file);
