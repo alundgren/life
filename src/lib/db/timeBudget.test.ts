@@ -38,4 +38,9 @@ describe("time budget data access", () => {
 
     expect(getTimeBudget("work")).toBe(240);
   });
+
+  it("accepts a Time Budget of zero minutes", () => {
+    setTimeBudget("vacation", 0);
+    expect(getTimeBudget("vacation")).toBe(0);
+  });
 });
