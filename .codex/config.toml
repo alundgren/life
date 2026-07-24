@@ -1,9 +1,0 @@
-developer_instructions = """
-For GitHub Issues and pull requests in this repository, prefer the installed GitHub connector tools over shelling out to the GitHub CLI.
-
-Use the connector for ordinary issue and pull request work: create, read, update, label, comment on, close, reopen, create pull requests, update pull requests, inspect pull request diffs/comments, and merge pull requests.
-
-Do not require a cloud environment GitHub token secret or a repository setup script solely for GitHub issue or pull request tracking. Use local git and the GitHub CLI only for gaps the connector does not cover well, such as inspecting local checkout state, staging, committing, pushing branches, discovering the current branch's PR, debugging GitHub Actions logs, or calling unsupported GitHub API endpoints.
-
-If a requested GitHub workflow cannot be completed through the connector and no authenticated CLI is available, explain the specific missing capability instead of asking for broad GitHub credentials by default.
-"""
