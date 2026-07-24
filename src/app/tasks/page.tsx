@@ -120,6 +120,8 @@ export default function TasksPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   async function loadTasks() {
     try {
@@ -141,7 +143,8 @@ export default function TasksPage() {
         return res.json();
       })
       .then((body: Task[]) => setTasks(body))
-      .catch(() => setLoadError("Failed to load Tasks."));
+      .catch(() => setLoadError("Failed to load Tasks."))
+      .finally(() => setLoading(false));
   }, []);
 
   function resetForm() {
@@ -167,32 +170,37 @@ export default function TasksPage() {
       return;
     }
 
-    const res =
-      editingId === null
-        ? await fetch("/api/tasks", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(toPayload(form)),
-          })
-        : await fetch(`/api/tasks/${editingId}`, {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(toPayload(form)),
-          });
+    setSaving(true);
+    try {
+      const res =
+        editingId === null
+          ? await fetch("/api/tasks", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(toPayload(form)),
+            })
+          : await fetch(`/api/tasks/${editingId}`, {
+              method: "PUT",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(toPayload(form)),
+            });
 
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      setError(body.error ?? "Something went wrong saving the Task.");
-      return;
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Something went wrong saving the Task.");
+        return;
+      }
+
+      setSuccess(editingId === null ? "Task created." : "Task saved.");
+      resetForm();
+      await loadTasks();
+    } finally {
+      setSaving(false);
     }
-
-    setSuccess(editingId === null ? "Task created." : "Task saved.");
-    resetForm();
-    await loadTasks();
   }
 
   return (
-    <main className="mx-auto w-full max-w-2xl p-4 sm:p-6">
+    <main className="mx-auto w-full max-w-5xl p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Tasks</h1>
         <Link href="/" className="text-sm text-muted underline">
@@ -200,8 +208,9 @@ export default function TasksPage() {
         </Link>
       </div>
 
-      <section className="mt-6 rounded-lg border border-muted/30 p-4 sm:p-5">
-        <h2 className="text-lg font-medium">{editingId === null ? "Add a Task" : "Edit Task"}</h2>
+      <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start">
+        <section className="order-1 rounded-lg border border-muted/30 p-4 sm:p-5 lg:order-2">
+          <h2 className="text-lg font-medium">{editingId === null ? "Add a Task" : "Edit Task"}</h2>
 
         <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4" noValidate>
           <label className={labelClass}>
@@ -323,34 +332,37 @@ export default function TasksPage() {
           <div className="flex flex-wrap gap-3">
             <button
               type="submit"
-              className="rounded-md bg-foreground px-4 py-2 text-base font-medium text-background"
+              disabled={saving}
+              className="min-h-11 rounded-md bg-foreground px-4 py-2 text-base font-medium text-background disabled:opacity-60"
             >
-              {editingId === null ? "Add Task" : "Save changes"}
+              {saving ? "Saving…" : editingId === null ? "Add Task" : "Save changes"}
             </button>
             {editingId !== null && (
               <button
                 type="button"
                 onClick={resetForm}
-                className="rounded-md border border-muted/40 px-4 py-2 text-base"
+                className="min-h-11 rounded-md border border-muted/40 px-4 py-2 text-base"
               >
                 Cancel
               </button>
             )}
           </div>
         </form>
-      </section>
+        </section>
 
-      <section className="mt-8">
-        <h2 className="text-lg font-medium">Your Tasks</h2>
-        {loadError && (
-          <p role="alert" className="mt-2 text-sm text-red-600">
-            {loadError}
-          </p>
-        )}
-        {tasks.length === 0 && !loadError ? (
-          <p className="mt-2 text-sm text-muted">No Tasks yet.</p>
-        ) : (
-          <ul className="mt-3 flex flex-col gap-3">
+        <section className="order-2 lg:order-1">
+          <h2 className="text-lg font-medium">Your Tasks</h2>
+          {loadError && (
+            <p role="alert" className="mt-2 text-sm text-red-600">
+              {loadError}
+            </p>
+          )}
+          {loading ? (
+            <p className="mt-2 text-sm text-muted">Loading…</p>
+          ) : tasks.length === 0 && !loadError ? (
+            <p className="mt-2 text-sm text-muted">No Tasks yet.</p>
+          ) : (
+            <ul className="mt-3 flex flex-col gap-3">
             {tasks.map((task) => (
               <li
                 key={task.id}
@@ -377,15 +389,16 @@ export default function TasksPage() {
                   type="button"
                   onClick={() => startEdit(task)}
                   aria-label={`Edit ${task.description}`}
-                  className="self-start rounded-md border border-muted/40 px-3 py-1.5 text-sm"
+                  className="min-h-11 self-start rounded-md border border-muted/40 px-3 py-1.5 text-sm"
                 >
                   Edit
                 </button>
               </li>
             ))}
-          </ul>
-        )}
-      </section>
+            </ul>
+          )}
+        </section>
+      </div>
     </main>
   );
 }
