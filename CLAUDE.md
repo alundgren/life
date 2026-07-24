@@ -45,6 +45,12 @@ pnpm test    # must exit 0
 - The `ollama` service (`docker/ollama/`) pulls `OLLAMA_MODEL` on its own startup via a custom entrypoint and only reports healthy once the pull finishes; the `app` service depends on that health check so it never starts against a model-less Ollama.
 - SQLite data and the pulled Ollama model each live in their own named volume (`sqlite-data`, `ollama-data`) so both survive `docker compose down` / `up`.
 
+## Docker Compose (production, Raspberry Pi 5)
+
+- `docker-compose.prod.yml` + `Dockerfile.prod` run the same app + Planner + Ollama stack unattended, built from source on the target device — see the README's "Production deployment (Raspberry Pi 5)" section for usage.
+- `Dockerfile.prod` is a multi-stage build producing a Next.js standalone server (`next.config.ts`'s `output: "standalone"`); it builds for whatever architecture Docker reports, so the same file works for `arm64` (the Pi) and `amd64` (local verification).
+- Both services run with `restart: unless-stopped`; `ollama` additionally sets `mem_limit` sized for the Pi 5's memory (see the comment in `docker-compose.prod.yml` when targeting a 4GB/16GB variant instead of the assumed 8GB).
+
 ## Agent skills
 
 ### Issue tracker
