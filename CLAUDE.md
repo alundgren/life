@@ -23,7 +23,6 @@ pnpm test    # must exit 0
 
 ## Pull requests
 
-- Never include a link to the Claude session that created the PR.
 - Keep the description short and to the point.
 - If the PR closes a GitHub issue, link it (e.g. `Closes #123`).
 
@@ -65,3 +64,7 @@ Default canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `read
 ### Domain docs
 
 Single-context layout — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Implementing a `ready-for-agent` ticket
+
+Plain step-by-step flow for taking a `ready-for-agent` issue to a PR — see `docs/agents/implement.md`.
