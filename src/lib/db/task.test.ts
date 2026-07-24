@@ -7,6 +7,9 @@ import {
   getTaskById,
   listTasks,
   taskDurationMinutes,
+  TaskUpdateTargetNotFoundError,
+  updateFlexibleTask,
+  updateScheduledTask,
 } from "./task";
 
 describe("task data access", () => {
@@ -110,6 +113,88 @@ describe("task data access", () => {
     const tasks = listTasks();
     expect(tasks).toHaveLength(2);
     expect(tasks.map((t) => t.kind).sort()).toEqual(["flexible", "scheduled"]);
+  });
+
+  it("updates a Scheduled Task's parent and child fields together", () => {
+    const task = createScheduledTask({
+      description: "Training",
+      weekday: 2,
+      startTime: "16:00",
+      endTime: "19:00",
+      recurrenceIntervalWeeks: 1,
+    });
+
+    const updated = updateScheduledTask(task.id, {
+      description: "Strength training",
+      weekday: 4,
+      startTime: "07:30",
+      endTime: "08:45",
+      recurrenceIntervalWeeks: 2,
+    });
+
+    expect(updated).toEqual({
+      ...task,
+      description: "Strength training",
+      weekday: 4,
+      startTime: "07:30",
+      endTime: "08:45",
+      recurrenceIntervalWeeks: 2,
+    });
+    expect(getTaskById(task.id)).toEqual(updated);
+  });
+
+  it("updates a Flexible Task's parent and child fields together", () => {
+    const task = createFlexibleTask({
+      description: "Clean the windows",
+      frequencyText: "about every three months",
+      durationMinutes: 45,
+    });
+
+    const updated = updateFlexibleTask(task.id, {
+      description: "Clean downstairs windows",
+      frequencyText: "quarterly",
+      durationMinutes: 60,
+    });
+
+    expect(updated).toEqual({
+      ...task,
+      description: "Clean downstairs windows",
+      frequencyText: "quarterly",
+      durationMinutes: 60,
+    });
+    expect(getTaskById(task.id)).toEqual(updated);
+  });
+
+  it("rejects updating a missing Task id", () => {
+    expect(() =>
+      updateScheduledTask(999, {
+        description: "Training",
+        weekday: 2,
+        startTime: "16:00",
+        endTime: "19:00",
+        recurrenceIntervalWeeks: 1,
+      })
+    ).toThrow(TaskUpdateTargetNotFoundError);
+  });
+
+  it("rejects updating a Task through the wrong kind-specific function", () => {
+    const task = createFlexibleTask({
+      description: "Chore",
+      frequencyText: "monthly",
+      durationMinutes: 30,
+    });
+
+    expect(() =>
+      updateScheduledTask(task.id, {
+        description: "Training",
+        weekday: 2,
+        startTime: "16:00",
+        endTime: "19:00",
+        recurrenceIntervalWeeks: 1,
+      })
+    ).toThrow(TaskUpdateTargetNotFoundError);
+
+    expect(getTaskById(task.id)).toEqual(task);
   });
 
   it("derives a Scheduled Task's Duration from end_time − start_time", () => {

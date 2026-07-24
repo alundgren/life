@@ -38,6 +38,13 @@ export interface CreateFlexibleTaskInput {
   durationMinutes: number;
 }
 
+export class TaskUpdateTargetNotFoundError extends Error {
+  constructor(id: number, kind: TaskKind) {
+    super(`Task ${id} was not found as a ${kind} task`);
+    this.name = "TaskUpdateTargetNotFoundError";
+  }
+}
+
 interface TaskRow {
   id: number;
   kind: TaskKind;
@@ -124,6 +131,67 @@ export function createFlexibleTask(input: CreateFlexibleTaskInput): FlexibleTask
   })();
 
   return getTaskById(taskId) as FlexibleTask;
+}
+
+export function updateScheduledTask(
+  id: number,
+  input: CreateScheduledTaskInput
+): ScheduledTask {
+  const db = getDb();
+  const updateTask = db.prepare(
+    "UPDATE task SET description = ? WHERE id = ? AND kind = 'scheduled'"
+  );
+  const updateScheduled = db.prepare(
+    `UPDATE task_scheduled
+     SET weekday = ?, start_time = ?, end_time = ?, recurrence_interval_weeks = ?
+     WHERE task_id = ?`
+  );
+
+  db.transaction(() => {
+    const taskResult = updateTask.run(input.description, id);
+    if (taskResult.changes !== 1) {
+      throw new TaskUpdateTargetNotFoundError(id, "scheduled");
+    }
+
+    const scheduledResult = updateScheduled.run(
+      input.weekday,
+      input.startTime,
+      input.endTime,
+      input.recurrenceIntervalWeeks,
+      id
+    );
+    if (scheduledResult.changes !== 1) {
+      throw new TaskUpdateTargetNotFoundError(id, "scheduled");
+    }
+  })();
+
+  return getTaskById(id) as ScheduledTask;
+}
+
+export function updateFlexibleTask(id: number, input: CreateFlexibleTaskInput): FlexibleTask {
+  const db = getDb();
+  const updateTask = db.prepare(
+    "UPDATE task SET description = ? WHERE id = ? AND kind = 'flexible'"
+  );
+  const updateFlexible = db.prepare(
+    `UPDATE task_flexible
+     SET frequency_text = ?, duration_minutes = ?
+     WHERE task_id = ?`
+  );
+
+  db.transaction(() => {
+    const taskResult = updateTask.run(input.description, id);
+    if (taskResult.changes !== 1) {
+      throw new TaskUpdateTargetNotFoundError(id, "flexible");
+    }
+
+    const flexibleResult = updateFlexible.run(input.frequencyText, input.durationMinutes, id);
+    if (flexibleResult.changes !== 1) {
+      throw new TaskUpdateTargetNotFoundError(id, "flexible");
+    }
+  })();
+
+  return getTaskById(id) as FlexibleTask;
 }
 
 export function getTaskById(id: number): Task | undefined {
