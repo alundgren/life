@@ -7,6 +7,8 @@ import {
   getTaskById,
   listTasks,
   taskDurationMinutes,
+  updateFlexibleTask,
+  updateScheduledTask,
 } from "./task";
 
 describe("task data access", () => {
@@ -190,5 +192,154 @@ describe("task data access", () => {
         durationMinutes: 0,
       })
     ).toThrow();
+  });
+
+  it("updates a Scheduled Task's fields and reads back the updated typed form", () => {
+    const created = createScheduledTask({
+      description: "Strength training",
+      weekday: 2,
+      startTime: "16:00",
+      endTime: "19:00",
+      recurrenceIntervalWeeks: 1,
+    });
+
+    const updated = updateScheduledTask(created.id, {
+      description: "Mobility work",
+      weekday: 4,
+      startTime: "07:00",
+      endTime: "07:45",
+      recurrenceIntervalWeeks: 2,
+    });
+
+    expect(updated).toBeDefined();
+    expect(updated).toEqual(getTaskById(created.id));
+    if (updated?.kind !== "scheduled") {
+      throw new Error("expected a scheduled task");
+    }
+    expect(updated.kind).toBe("scheduled");
+    expect(updated.description).toBe("Mobility work");
+    expect(updated.weekday).toBe(4);
+    expect(updated.startTime).toBe("07:00");
+    expect(updated.endTime).toBe("07:45");
+    expect(updated.recurrenceIntervalWeeks).toBe(2);
+  });
+
+  it("updates a Flexible Task's fields and reads back the updated typed form", () => {
+    const created = createFlexibleTask({
+      description: "Clean the windows",
+      frequencyText: "about every three months",
+      durationMinutes: 45,
+    });
+
+    const updated = updateFlexibleTask(created.id, {
+      description: "Wash the car",
+      frequencyText: "roughly monthly",
+      durationMinutes: 30,
+    });
+
+    expect(updated).toBeDefined();
+    expect(updated).toEqual(getTaskById(created.id));
+    if (updated?.kind !== "flexible") {
+      throw new Error("expected a flexible task");
+    }
+    expect(updated.kind).toBe("flexible");
+    expect(updated.description).toBe("Wash the car");
+    expect(updated.frequencyText).toBe("roughly monthly");
+    expect(updated.durationMinutes).toBe(30);
+  });
+
+  it("updates the parent task row and its scheduled child row together", () => {
+    const created = createScheduledTask({
+      description: "Training",
+      weekday: 2,
+      startTime: "16:00",
+      endTime: "19:00",
+      recurrenceIntervalWeeks: 1,
+    });
+
+    updateScheduledTask(created.id, {
+      description: "Renamed",
+      weekday: 5,
+      startTime: "08:00",
+      endTime: "09:00",
+      recurrenceIntervalWeeks: 3,
+    });
+
+    const parent = getDb()
+      .prepare("SELECT description FROM task WHERE id = ?")
+      .get(created.id) as { description: string };
+    const child = getDb()
+      .prepare("SELECT weekday, recurrence_interval_weeks FROM task_scheduled WHERE task_id = ?")
+      .get(created.id) as { weekday: number; recurrence_interval_weeks: number };
+
+    expect(parent.description).toBe("Renamed");
+    expect(child.weekday).toBe(5);
+    expect(child.recurrence_interval_weeks).toBe(3);
+  });
+
+  it("returns undefined when updating a non-existent id, writing nothing", () => {
+    expect(
+      updateScheduledTask(999, {
+        description: "Ghost",
+        weekday: 1,
+        startTime: "09:00",
+        endTime: "10:00",
+        recurrenceIntervalWeeks: 1,
+      })
+    ).toBeUndefined();
+    expect(
+      updateFlexibleTask(999, {
+        description: "Ghost",
+        frequencyText: "monthly",
+        durationMinutes: 30,
+      })
+    ).toBeUndefined();
+    expect(listTasks()).toHaveLength(0);
+  });
+
+  it("rejects a wrong-kind update without touching the stored Task", () => {
+    const scheduled = createScheduledTask({
+      description: "Training",
+      weekday: 2,
+      startTime: "16:00",
+      endTime: "19:00",
+      recurrenceIntervalWeeks: 1,
+    });
+    const flexible = createFlexibleTask({
+      description: "Chore",
+      frequencyText: "monthly",
+      durationMinutes: 30,
+    });
+
+    // Flexible update against a Scheduled id, and vice versa: both refuse.
+    expect(
+      updateFlexibleTask(scheduled.id, {
+        description: "Hijacked",
+        frequencyText: "weekly",
+        durationMinutes: 10,
+      })
+    ).toBeUndefined();
+    expect(
+      updateScheduledTask(flexible.id, {
+        description: "Hijacked",
+        weekday: 0,
+        startTime: "00:00",
+        endTime: "01:00",
+        recurrenceIntervalWeeks: 1,
+      })
+    ).toBeUndefined();
+
+    // Stored values are untouched.
+    expect(getTaskById(scheduled.id)).toEqual(scheduled);
+    expect(getTaskById(flexible.id)).toEqual(flexible);
+    // No stray child rows were written into the other kind's table.
+    const scheduledStrayChild = getDb()
+      .prepare("SELECT COUNT(*) as count FROM task_flexible WHERE task_id = ?")
+      .get(scheduled.id) as { count: number };
+    const flexibleStrayChild = getDb()
+      .prepare("SELECT COUNT(*) as count FROM task_scheduled WHERE task_id = ?")
+      .get(flexible.id) as { count: number };
+    expect(scheduledStrayChild.count).toBe(0);
+    expect(flexibleStrayChild.count).toBe(0);
   });
 });

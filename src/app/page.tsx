@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type PlannerStatus = {
@@ -32,6 +33,9 @@ export default function Home() {
             ` — last ran ${data.planner.lastRunAt} (${data.planner.lastStatus})`}
         </p>
       )}
+      <Link href="/tasks" className="mt-4 text-foreground underline">
+        Manage Tasks
+      </Link>
     </div>
   );
 }

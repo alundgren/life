@@ -38,6 +38,12 @@ export interface CreateFlexibleTaskInput {
   durationMinutes: number;
 }
 
+/** Same fields as {@link CreateScheduledTaskInput}; the id is passed separately, not in the body. */
+export type UpdateScheduledTaskInput = CreateScheduledTaskInput;
+
+/** Same fields as {@link CreateFlexibleTaskInput}; the id is passed separately, not in the body. */
+export type UpdateFlexibleTaskInput = CreateFlexibleTaskInput;
+
 interface TaskRow {
   id: number;
   kind: TaskKind;
@@ -124,6 +130,70 @@ export function createFlexibleTask(input: CreateFlexibleTaskInput): FlexibleTask
   })();
 
   return getTaskById(taskId) as FlexibleTask;
+}
+
+/**
+ * Updates a Scheduled Task's parent `description` and its `task_scheduled` fields in one
+ * transaction. Returns the updated `ScheduledTask`, or `undefined` when no Scheduled Task
+ * with that id exists — so a Flexible Task's row is never written by the Scheduled path.
+ */
+export function updateScheduledTask(
+  id: number,
+  input: UpdateScheduledTaskInput
+): ScheduledTask | undefined {
+  const db = getDb();
+  const existing = getTaskById(id);
+  if (existing?.kind !== "scheduled") {
+    return undefined;
+  }
+
+  const updateTask = db.prepare("UPDATE task SET description = ? WHERE id = ?");
+  const updateScheduled = db.prepare(
+    `UPDATE task_scheduled
+     SET weekday = ?, start_time = ?, end_time = ?, recurrence_interval_weeks = ?
+     WHERE task_id = ?`
+  );
+
+  db.transaction(() => {
+    updateTask.run(input.description, id);
+    updateScheduled.run(
+      input.weekday,
+      input.startTime,
+      input.endTime,
+      input.recurrenceIntervalWeeks,
+      id
+    );
+  })();
+
+  return getTaskById(id) as ScheduledTask;
+}
+
+/**
+ * Updates a Flexible Task's parent `description` and its `task_flexible` fields in one
+ * transaction. Returns the updated `FlexibleTask`, or `undefined` when no Flexible Task
+ * with that id exists — so a Scheduled Task's row is never written by the Flexible path.
+ */
+export function updateFlexibleTask(
+  id: number,
+  input: UpdateFlexibleTaskInput
+): FlexibleTask | undefined {
+  const db = getDb();
+  const existing = getTaskById(id);
+  if (existing?.kind !== "flexible") {
+    return undefined;
+  }
+
+  const updateTask = db.prepare("UPDATE task SET description = ? WHERE id = ?");
+  const updateFlexible = db.prepare(
+    "UPDATE task_flexible SET frequency_text = ?, duration_minutes = ? WHERE task_id = ?"
+  );
+
+  db.transaction(() => {
+    updateTask.run(input.description, id);
+    updateFlexible.run(input.frequencyText, input.durationMinutes, id);
+  })();
+
+  return getTaskById(id) as FlexibleTask;
 }
 
 export function getTaskById(id: number): Task | undefined {
