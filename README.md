@@ -33,6 +33,22 @@ The app is available at [http://localhost:3000](http://localhost:3000).
 - The project directory is bind-mounted into the `app` container, so editing source on the host hot-reloads the running dev server. `node_modules` and `.next` stay in anonymous volumes so the container's own (Linux) install isn't shadowed by the host's.
 - Run `docker compose down -v` to also drop the named volumes (fresh database and a re-pulled model on next `up`).
 
+## Production deployment (Raspberry Pi 5)
+
+Runs the same app + Planner + Ollama stack unattended, built from source directly on the Pi — no external registry or credentials needed.
+
+```bash
+git clone <this repo> && cd life
+cp .env.example .env   # adjust OLLAMA_MODEL if needed
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+- The app image is a multi-stage build (`Dockerfile.prod`) producing a standalone Next.js server, built for whatever architecture the Pi reports (`arm64`) — the same Dockerfile also builds fine on `amd64` for local verification before deploying.
+- Both `app` and `ollama` are configured with `restart: unless-stopped`, so a Pi reboot (or a container crash) brings the whole stack back up on its own, as long as Docker itself is enabled to start on boot (the default on Raspberry Pi OS's Docker package).
+- `sqlite-data` and `ollama-data` are named volumes, so the database and the pulled model both survive `docker compose -f docker-compose.prod.yml down` and a reboot. Only `down -v` drops them.
+- The `ollama` service caps memory at `mem_limit: 4g` in `docker-compose.prod.yml`, sized for an 8GB Pi 5. Edit that value first if deploying to a 4GB or 16GB Pi 5.
+- To pick up new code, pull the latest changes and re-run the `up -d --build` command above; existing data is untouched.
+
 ## Environment variables
 
 See `.env.example` for the full list. The app fails fast at startup with a clear error if a required variable is missing.
