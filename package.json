@@ -13,7 +13,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run --config vitest.config.ts",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "prototype:weekly-plan": "node --experimental-strip-types scripts/prototype-weekly-plan.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.1",
