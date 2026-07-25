@@ -17,6 +17,12 @@ export interface RecordCompletionInput {
   note?: string;
 }
 
+export class PlannedActivityAlreadyDoneError extends Error {
+  constructor() {
+    super("Planned Activity is already done.");
+  }
+}
+
 interface CompletionRow {
   id: number;
   task_id: number;
@@ -44,14 +50,42 @@ function rowToCompletion(row: CompletionRow): Completion {
 
 /** Records a Completion for a Task, optionally linked to a Planned Activity, or standing alone. */
 export function recordCompletion(input: RecordCompletionInput): Completion {
-  const result = getDb()
-    .prepare(
-      `INSERT INTO completion (task_id, planned_activity_id, completed_date, note)
-       VALUES (?, ?, ?, ?)`
-    )
-    .run(input.taskId, input.plannedActivityId ?? null, input.completedDate, input.note ?? null);
+  const db = getDb();
+  const insert = db.prepare(
+    `INSERT INTO completion (task_id, planned_activity_id, completed_date, note)
+     VALUES (?, ?, ?, ?)`
+  );
+  const readActivity = db.prepare("SELECT status FROM planned_activity WHERE id = ?");
+  const markDone = db.prepare("UPDATE planned_activity SET status = 'done' WHERE id = ?");
+  const touchPlan = db.prepare(
+    `UPDATE weekly_plan SET updated_at = datetime('now')
+     WHERE id = (SELECT weekly_plan_id FROM planned_activity WHERE id = ?)`
+  );
 
-  return getCompletionById(Number(result.lastInsertRowid))!;
+  const id = db.transaction(() => {
+    if (input.plannedActivityId !== undefined) {
+      const activity = readActivity.get(input.plannedActivityId) as { status: string } | undefined;
+      if (activity?.status === "done") {
+        throw new PlannedActivityAlreadyDoneError();
+      }
+    }
+
+    const result = insert.run(
+      input.taskId,
+      input.plannedActivityId ?? null,
+      input.completedDate,
+      input.note ?? null
+    );
+
+    if (input.plannedActivityId !== undefined) {
+      markDone.run(input.plannedActivityId);
+      touchPlan.run(input.plannedActivityId);
+    }
+
+    return Number(result.lastInsertRowid);
+  })();
+
+  return getCompletionById(id)!;
 }
 
 export function getCompletionById(id: number): Completion | undefined {

@@ -105,3 +105,18 @@ export function listPlannedActivitiesForPlan(planId: number): PlannedActivity[] 
     .all(planId) as PlannedActivityRow[];
   return rows.map(rowToPlannedActivity);
 }
+
+/** Planned Activities for one calendar date, with timed Scheduled Tasks before day-level Flexible Tasks. */
+export function listPlannedActivitiesForDate(date: string): PlannedActivity[] {
+  const rows = getDb()
+    .prepare(
+      `${SELECT_PLANNED_ACTIVITY_SQL}
+       WHERE pa.date = ?
+       ORDER BY
+         CASE WHEN ts.start_time IS NULL THEN 1 ELSE 0 END,
+         ts.start_time,
+         pa.id`
+    )
+    .all(date) as PlannedActivityRow[];
+  return rows.map(rowToPlannedActivity);
+}
