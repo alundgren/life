@@ -16,6 +16,12 @@ describe("runMigrations", () => {
 
     const applied = db.prepare("SELECT filename FROM schema_migrations").all();
     expect(applied.length).toBeGreaterThan(0);
+
+    const budgets = db.prepare("SELECT mode, weekly_minutes FROM time_budget ORDER BY mode").all();
+    expect(budgets).toEqual([
+      { mode: "vacation", weekly_minutes: 600 },
+      { mode: "work", weekly_minutes: 180 },
+    ]);
   });
 
   it("does not re-apply already-applied migrations", () => {

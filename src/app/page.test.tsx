@@ -151,6 +151,7 @@ describe("daily view page", () => {
 
     expect(await screen.findByText("Nothing planned for today yet.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Record Completion" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
   });
 
   it("ticks off a Planned Activity with a note, refreshes it as done, and removes the control", async () => {
