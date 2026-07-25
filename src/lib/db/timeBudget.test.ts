@@ -14,9 +14,9 @@ describe("time budget data access", () => {
     resetDb();
   });
 
-  it("is unset for a Mode until configured", () => {
-    expect(getTimeBudget("work")).toBeUndefined();
-    expect(getTimeBudget("vacation")).toBeUndefined();
+  it("resolves to seeded budgets before either Mode is configured", () => {
+    expect(getTimeBudget("work")).toBe(180);
+    expect(getTimeBudget("vacation")).toBe(600);
   });
 
   it("stores and reads a Mode's Time Budget", () => {

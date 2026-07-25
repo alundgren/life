@@ -175,9 +175,14 @@ export default function Home() {
           <h1 className="text-2xl font-semibold">Today</h1>
           <p className="mt-1 text-sm text-muted">{today}</p>
         </div>
-        <Link href="/tasks" className="text-sm text-muted underline">
-          Manage Tasks
-        </Link>
+        <nav className="flex flex-wrap gap-3 text-sm text-muted">
+          <Link href="/tasks" className="underline">
+            Manage Tasks
+          </Link>
+          <Link href="/settings" className="underline">
+            Settings
+          </Link>
+        </nav>
       </header>
 
       <section>
