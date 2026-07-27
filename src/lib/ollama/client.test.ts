@@ -51,6 +51,16 @@ describe("callOllama", () => {
     });
   });
 
+  it("surfaces the underlying reason when the connection itself fails", async () => {
+    const failure = new TypeError("fetch failed");
+    failure.cause = new Error("connect ECONNREFUSED 127.0.0.1:11434");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(failure));
+
+    await expect(
+      callOllama("ping", { host: "http://localhost:11434", model: "test-model" })
+    ).rejects.toThrow("Ollama request to http://localhost:11434 failed: connect ECONNREFUSED 127.0.0.1:11434");
+  });
+
   it("throws a clear error when the request fails", async () => {
     vi.stubGlobal(
       "fetch",
