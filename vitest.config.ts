@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
@@ -7,5 +7,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // Service-dependent tests belong to vitest.integration.config.ts only.
+    exclude: [...configDefaults.exclude, "src/**/*.integration.test.ts"],
   },
 });
