@@ -68,8 +68,9 @@ export function createWeeklyPlanWithActivities(
 }
 
 /**
- * Replaces only a plan's pending Planned Activities from `fromDate` onward. Done, missed and
- * past-dated activities remain untouched. The activities and Planner watermark change together.
+ * Replaces only a plan's pending Flexible Planned Activities from `fromDate` onward. Scheduled,
+ * done, missed and past-dated activities remain untouched. The activities and Planner watermark
+ * change together.
  */
 export function replaceRevisablePlannedActivities(
   weeklyPlanId: number,
@@ -79,7 +80,8 @@ export function replaceRevisablePlannedActivities(
   const db = getDb();
   const deleteActivities = db.prepare(
     `DELETE FROM planned_activity
-     WHERE weekly_plan_id = ? AND status = 'pending' AND date >= ?`
+     WHERE weekly_plan_id = ? AND status = 'pending' AND date >= ?
+       AND task_id IN (SELECT task_id FROM task_flexible)`
   );
   const insertActivity = db.prepare(
     `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status)

@@ -31,9 +31,9 @@ function seedDb() {
   callOllamaMock.mockReset();
 }
 
-// These cover start/stop/interval only. The mocked response deliberately yields no Planned
-// Activities, so no Weekly Plan is written and every tick still reaches Ollama — the run count
-// stays the honest measure of the loop, rather than of the "already planned" skip.
+// These cover start/stop/interval only. A Flexible Task keeps each tick on the Ollama path, and
+// the mocked empty response writes no Weekly Plan, so the run count measures the loop rather
+// than the "already planned" skip.
 describe("planner lifecycle", () => {
   beforeEach(seedDb);
 
@@ -54,6 +54,7 @@ describe("planner lifecycle", () => {
   });
 
   it("marks the planner running immediately and runs once right away", async () => {
+    createFlexibleTask({ description: "Do the laundry", frequencyText: "weekly", durationMinutes: 15 });
     callOllamaMock.mockResolvedValue('{"activities":[]}');
 
     startPlanner(1000);
@@ -64,6 +65,7 @@ describe("planner lifecycle", () => {
 
   it("stops scheduling further runs after stop", async () => {
     vi.useFakeTimers();
+    createFlexibleTask({ description: "Do the laundry", frequencyText: "weekly", durationMinutes: 15 });
     callOllamaMock.mockResolvedValue('{"activities":[]}');
 
     startPlanner(1000);
@@ -77,6 +79,7 @@ describe("planner lifecycle", () => {
 
   it("runs again on each interval tick while running", async () => {
     vi.useFakeTimers();
+    createFlexibleTask({ description: "Do the laundry", frequencyText: "weekly", durationMinutes: 15 });
     callOllamaMock.mockResolvedValue('{"activities":[]}');
 
     startPlanner(1000);
@@ -89,6 +92,7 @@ describe("planner lifecycle", () => {
 
   it("does not start a second interval when already running", async () => {
     vi.useFakeTimers();
+    createFlexibleTask({ description: "Do the laundry", frequencyText: "weekly", durationMinutes: 15 });
     callOllamaMock.mockResolvedValue('{"activities":[]}');
 
     startPlanner(1000);
@@ -159,7 +163,9 @@ describe("weekly plan generation", () => {
 
     const status = getPlannerStatus();
     expect(status.lastStatus).toBe("ok");
-    expect(status.lastResult).toBe("Planned week 2026-07-27: 2 Planned Activities.");
+    expect(status.lastResult).toBe(
+      "Planned week 2026-07-27: 1 Scheduled and 1 model-placed Planned Activities."
+    );
   });
 
   it("carries a Scheduled Task's time slot and leaves a Flexible Task day-level", async () => {
@@ -183,6 +189,122 @@ describe("weekly plan generation", () => {
     expect([flexible.startTime, flexible.endTime]).toEqual([undefined, undefined]);
   });
 
+  it("mechanically places a Scheduled Task in Work Mode even inside assumed-busy hours", async () => {
+    const training = createTraining();
+    setMode("work");
+
+    await runPlannerOnce();
+
+    const activities = listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id);
+    expect(activities.map((activity) => [activity.taskId, activity.date])).toEqual([
+      [training.id, "2026-07-28"],
+    ]);
+    expect([activities[0].startTime, activities[0].endTime]).toEqual(["16:00", "18:00"]);
+    expect(callOllamaMock).not.toHaveBeenCalled();
+  });
+
+  it("places the same Scheduled Task in Vacation Mode", async () => {
+    const training = createTraining();
+    setMode("vacation");
+
+    await runPlannerOnce();
+
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id).map((activity) => [
+        activity.taskId,
+        activity.date,
+      ])
+    ).toEqual([[training.id, "2026-07-28"]]);
+    expect(callOllamaMock).not.toHaveBeenCalled();
+  });
+
+  it("places a Sunday Scheduled Task on the last day of the Monday-start week", async () => {
+    const sundayTask = createScheduledTask({
+      description: "Prepare for Monday",
+      weekday: 0,
+      startTime: "18:00",
+      endTime: "19:00",
+      recurrenceIntervalWeeks: 1,
+    });
+
+    await runPlannerOnce();
+
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id).map((activity) => [
+        activity.taskId,
+        activity.date,
+      ])
+    ).toEqual([[sundayTask.id, "2026-08-02"]]);
+  });
+
+  it("anchors fortnightly Scheduled Tasks to their creation week", async () => {
+    const training = createScheduledTask({
+      description: "Bouldering: board and strength",
+      weekday: 2,
+      startTime: "16:00",
+      endTime: "18:00",
+      recurrenceIntervalWeeks: 2,
+    });
+
+    await runPlannerOnce();
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek("2026-07-27")!.id).map(
+        (activity) => activity.taskId
+      )
+    ).toEqual([training.id]);
+
+    vi.setSystemTime(new Date(2026, 7, 5, 12, 0, 0));
+    await runPlannerOnce();
+    expect(getWeeklyPlanByWeek("2026-08-03")).toBeUndefined();
+
+    vi.setSystemTime(new Date(2026, 7, 12, 12, 0, 0));
+    await runPlannerOnce();
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek("2026-08-10")!.id).map(
+        (activity) => activity.taskId
+      )
+    ).toEqual([training.id]);
+    expect(callOllamaMock).not.toHaveBeenCalled();
+  });
+
+  it("persists Scheduled placement when Ollama returns a well-formed empty response", async () => {
+    const training = createTraining();
+    createLaundry();
+    callOllamaMock.mockResolvedValue('{"activities":[]}');
+
+    await runPlannerOnce();
+
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id).map((activity) => activity.taskId)
+    ).toEqual([training.id]);
+    expect(getPlannerStatus().lastStatus).toBe("ok");
+  });
+
+  it("drops model entries naming Scheduled Tasks while retaining their mechanical placement", async () => {
+    const training = createTraining();
+    const laundry = createLaundry();
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({
+        activities: [
+          { taskId: training.id, date: "2026-07-31" },
+          { taskId: laundry.id, date: "2026-07-31" },
+        ],
+      })
+    );
+
+    await runPlannerOnce();
+
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id).map((activity) => [
+        activity.taskId,
+        activity.date,
+      ])
+    ).toEqual([
+      [training.id, "2026-07-28"],
+      [laundry.id, "2026-07-31"],
+    ]);
+  });
+
   it("asks Ollama for JSON, for the week being planned", async () => {
     createLaundry();
     callOllamaMock.mockResolvedValue('{"activities":[]}');
@@ -198,11 +320,12 @@ describe("weekly plan generation", () => {
     const prompt = callOllamaMock.mock.calls[0][0];
     expect(prompt).toContain(WEEK_START);
     expect(prompt).toContain("2026-08-02");
+    expect(getWeeklyPlanByWeek(WEEK_START)).toBeUndefined();
   });
 
-  it("tells Ollama the Mode, the Time Budget, and each Task's description and Duration", async () => {
-    setMode("vacation");
-    setTimeBudget("vacation", 600);
+  it("tells Ollama the Mode's busy hours and the week's immovable Scheduled placements", async () => {
+    setMode("work");
+    setTimeBudget("work", 600);
     createTraining();
     createLaundry();
     callOllamaMock.mockResolvedValue('{"activities":[]}');
@@ -210,8 +333,11 @@ describe("weekly plan generation", () => {
     await runPlannerOnce();
 
     const prompt = callOllamaMock.mock.calls[0][0];
-    expect(prompt).toContain("vacation");
+    expect(prompt).toContain("work");
+    expect(prompt).toContain("assumed-busy hours: Mon-Fri 09:00-17:00");
     expect(prompt).toContain("600 minutes");
+    expect(prompt).toContain("Fixed Scheduled Task placements");
+    expect(prompt).toContain("2026-07-28 | Tuesday | 16:00-18:00");
     expect(prompt).toContain("Bouldering: board and strength");
     expect(prompt).toContain("120 minutes");
     expect(prompt).toContain("Do the laundry");
@@ -272,6 +398,7 @@ describe("weekly plan generation", () => {
   });
 
   it("records an error and writes nothing when no entry survives validation", async () => {
+    createTraining();
     createLaundry();
     callOllamaMock.mockResolvedValue("I am afraid I cannot help with that.");
 
@@ -322,6 +449,7 @@ describe("weekly plan generation", () => {
 
     await expect(runPlannerOnce()).resolves.toBeUndefined();
     expect(getWeeklyPlanByWeek(WEEK_START)).toBeUndefined();
+    expect(callOllamaMock).not.toHaveBeenCalled();
   });
 
   it("revises the open remainder after a Completion while preserving frozen activities", async () => {
@@ -391,7 +519,7 @@ describe("weekly plan generation", () => {
     expect(listPlannedActivitiesForPlan(plan.id).map((activity) => activity.date)).toEqual(["2026-07-31"]);
   });
 
-  it("leaves the plan and watermark untouched when a revision response has no usable entries", async () => {
+  it("treats a well-formed empty revision response as an empty Flexible remainder", async () => {
     const laundry = createLaundry();
     const plan = createWeeklyPlanWithActivities(WEEK_START, [
       { taskId: laundry.id, date: "2026-07-30" },
@@ -404,8 +532,8 @@ describe("weekly plan generation", () => {
 
     await runPlannerOnce();
 
-    expect(listPlannedActivitiesForPlan(plan.id).map((activity) => activity.date)).toEqual(["2026-07-30"]);
-    expect(getWeeklyPlanByWeek(WEEK_START)?.revisedAt).toBe("2026-07-01 00:00:00");
-    expect(getPlannerStatus().lastStatus).toBe("error");
+    expect(listPlannedActivitiesForPlan(plan.id)).toEqual([]);
+    expect(getWeeklyPlanByWeek(WEEK_START)?.revisedAt).not.toBe("2026-07-01 00:00:00");
+    expect(getPlannerStatus().lastStatus).toBe("ok");
   });
 });
