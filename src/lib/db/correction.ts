@@ -44,3 +44,11 @@ export function listCorrections(taskId: number): Correction[] {
     .all(taskId) as CorrectionRow[];
   return rows.map(rowToCorrection);
 }
+
+/** Whether any Correction was recorded at or after a Planner watermark. */
+export function hasCorrectionsSince(timestamp: string): boolean {
+  const row = getDb()
+    .prepare("SELECT EXISTS(SELECT 1 FROM correction WHERE created_at >= ?) AS exists_since")
+    .get(timestamp) as { exists_since: number };
+  return row.exists_since === 1;
+}

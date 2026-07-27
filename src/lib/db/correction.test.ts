@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDbClient, getDb, resetDb, setDb } from "./client";
 import { runMigrations } from "./migrate";
-import { applyCorrection, listCorrections } from "./correction";
+import { applyCorrection, hasCorrectionsSince, listCorrections } from "./correction";
 import { createFlexibleTask, getTaskById } from "./task";
 
 describe("correction data access", () => {
@@ -83,5 +83,20 @@ describe("correction data access", () => {
 
   it("rejects a Correction for a task_id that doesn't exist", () => {
     expect(() => applyCorrection(999, "orphaned correction")).toThrow();
+  });
+
+  it("finds Corrections at the inclusive Planner watermark", () => {
+    const task = createFlexibleTask({
+      description: "Original",
+      frequencyText: "weekly",
+      durationMinutes: 30,
+    });
+    applyCorrection(task.id, "Updated");
+    getDb()
+      .prepare("UPDATE correction SET created_at = '2026-07-29 12:00:00' WHERE task_id = ?")
+      .run(task.id);
+
+    expect(hasCorrectionsSince("2026-07-29 12:00:00")).toBe(true);
+    expect(hasCorrectionsSince("2026-07-29 12:00:01")).toBe(false);
   });
 });

@@ -1,11 +1,19 @@
 import { getDb } from "@/lib/db/client";
-import { getLatestCompletionDatesByTask } from "@/lib/db/completion";
+import {
+  getLatestCompletionDatesByTask,
+  hasCompletionsSince,
+  listCompletionsForDateRange,
+  type Completion,
+} from "@/lib/db/completion";
+import { hasCorrectionsSince } from "@/lib/db/correction";
 import { getMode, type ModeValue } from "@/lib/db/mode";
+import { listPlannedActivitiesForPlan, type PlannedActivity } from "@/lib/db/plannedActivity";
 import { listTasks, taskDurationMinutes, type Task } from "@/lib/db/task";
 import { getTimeBudget } from "@/lib/db/timeBudget";
 import {
   createWeeklyPlanWithActivities,
   getWeeklyPlanByWeek,
+  replaceRevisablePlannedActivities,
   type NewPlannedActivity,
 } from "@/lib/db/weeklyPlan";
 import { getEnv } from "@/lib/env";
@@ -137,6 +145,45 @@ function buildPrompt(
   ].join("\n");
 }
 
+function activityLine(activity: PlannedActivity): string {
+  return `- task id ${activity.taskId} | ${activity.date} | ${activity.status}`;
+}
+
+function completionLine(completion: Completion): string {
+  return (
+    `- task id ${completion.taskId} | completed ${completion.completedDate}` +
+    (completion.note === undefined ? "" : ` | note: \"${completion.note}\"`)
+  );
+}
+
+/** A generation prompt extended with the current-week facts needed to revise its open remainder. */
+function buildRevisionPrompt(
+  weekStart: string,
+  dates: string[],
+  today: string,
+  mode: ModeValue,
+  timeBudgetMinutes: number | undefined,
+  tasks: Task[],
+  lastCompletionDates: Map<number, string>,
+  frozenActivities: PlannedActivity[],
+  revisableActivities: PlannedActivity[],
+  completions: Completion[]
+): string {
+  return [
+    buildPrompt(weekStart, dates, mode, timeBudgetMinutes, tasks, lastCompletionDates),
+    "",
+    `Today is ${today}. Revise only today and the remaining days of this week; do not plan past dates.`,
+    "Frozen Planned Activities (do not duplicate or change these):",
+    frozenActivities.map(activityLine).join("\n") || "(none)",
+    "",
+    "Current revisable remainder (replace this):",
+    revisableActivities.map(activityLine).join("\n") || "(none)",
+    "",
+    "This week's Completions:",
+    completions.map(completionLine).join("\n") || "(none)",
+  ].join("\n");
+}
+
 /** The first balanced JSON object in the text, so prose or a code fence around it is tolerated. */
 function extractJsonObject(text: string): string | undefined {
   const start = text.indexOf("{");
@@ -183,7 +230,8 @@ function extractJsonObject(text: string): string | undefined {
 function parsePlannedActivities(
   response: string,
   knownTaskIds: Set<number>,
-  datesInWeek: Set<string>
+  datesInWeek: Set<string>,
+  blockedTaskDates: Set<string> = new Set()
 ): NewPlannedActivity[] {
   const json = extractJsonObject(response);
   if (json === undefined) {
@@ -217,7 +265,7 @@ function parsePlannedActivities(
       continue;
     }
     const key = `${taskId}:${date}`;
-    if (seen.has(key)) {
+    if (seen.has(key) || blockedTaskDates.has(key)) {
       continue;
     }
     seen.add(key);
@@ -228,8 +276,8 @@ function parsePlannedActivities(
 }
 
 /**
- * Generates this week's Weekly Plan through Ollama when the week has none yet, and records the
- * outcome as a `planner_run` row. A week that is already planned is skipped without an LLM call.
+ * Generates this week's Weekly Plan when none exists. An existing plan is revised only after new
+ * Completion or Correction feedback has arrived since the Planner last wrote it.
  */
 export async function runPlannerOnce(): Promise<void> {
   const recordRun = getDb().prepare(
@@ -238,7 +286,8 @@ export async function runPlannerOnce(): Promise<void> {
 
   try {
     const weekStart = currentWeekStart(new Date());
-    if (getWeeklyPlanByWeek(weekStart)) {
+    const existingPlan = getWeeklyPlanByWeek(weekStart);
+    if (existingPlan && !hasCompletionsSince(existingPlan.revisedAt) && !hasCorrectionsSince(existingPlan.revisedAt)) {
       recordRun.run(new Date().toISOString(), "ok", `Week ${weekStart} already planned.`);
       return;
     }
@@ -247,14 +296,36 @@ export async function runPlannerOnce(): Promise<void> {
     const dates = weekDates(weekStart);
     const tasks = listTasks();
     const mode = getMode();
-    const prompt = buildPrompt(
-      weekStart,
-      dates,
-      mode,
-      getTimeBudget(mode),
-      tasks,
-      getLatestCompletionDatesByTask()
+    const today = formatLocalDate(new Date());
+    const lastCompletionDates = getLatestCompletionDatesByTask();
+    const existingActivities = existingPlan ? listPlannedActivitiesForPlan(existingPlan.id) : [];
+    const frozenActivities = existingActivities.filter(
+      (activity) => activity.status !== "pending" || activity.date < today
     );
+    const revisableActivities = existingActivities.filter(
+      (activity) => activity.status === "pending" && activity.date >= today
+    );
+    const prompt = existingPlan
+      ? buildRevisionPrompt(
+          weekStart,
+          dates,
+          today,
+          mode,
+          getTimeBudget(mode),
+          tasks,
+          lastCompletionDates,
+          frozenActivities,
+          revisableActivities,
+          listCompletionsForDateRange(dates[0], dates.at(-1)!)
+        )
+      : buildPrompt(
+          weekStart,
+          dates,
+          mode,
+          getTimeBudget(mode),
+          tasks,
+          lastCompletionDates
+        );
 
     const response = await callOllama(prompt, {
       host: env.OLLAMA_HOST,
@@ -265,7 +336,8 @@ export async function runPlannerOnce(): Promise<void> {
     const activities = parsePlannedActivities(
       response,
       new Set(tasks.map((task) => task.id)),
-      new Set(dates)
+      new Set(existingPlan ? dates.filter((date) => date >= today) : dates),
+      new Set(frozenActivities.map((activity) => `${activity.taskId}:${activity.date}`))
     );
 
     if (activities.length === 0) {
@@ -273,6 +345,18 @@ export async function runPlannerOnce(): Promise<void> {
         new Date().toISOString(),
         "error",
         `Ollama returned no usable Planned Activities for week ${weekStart}.`
+      );
+      return;
+    }
+
+    if (existingPlan) {
+      replaceRevisablePlannedActivities(existingPlan.id, today, activities);
+      recordRun.run(
+        new Date().toISOString(),
+        "ok",
+        `Revised week ${weekStart} from ${today}: ${activities.length} Planned ${
+          activities.length === 1 ? "Activity" : "Activities"
+        }.`
       );
       return;
     }

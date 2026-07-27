@@ -6,6 +6,8 @@ import { createWeeklyPlan } from "./weeklyPlan";
 import { addPlannedActivity } from "./plannedActivity";
 import {
   getLatestCompletionDatesByTask,
+  hasCompletionsSince,
+  listCompletionsForDateRange,
   listUnprocessedCompletions,
   markCompletionProcessed,
   recordCompletion,
@@ -128,6 +130,28 @@ describe("completion data access", () => {
 
     expect(latest.get(cleaned.id)).toBe("2026-07-21");
     expect(latest.has(neverDone.id)).toBe(false);
+  });
+
+  it("finds Completions at the inclusive Planner watermark and reads a week's Completions", () => {
+    const task = createFlexibleTask({
+      description: "Clean the windows",
+      frequencyText: "about every three months",
+      durationMinutes: 45,
+    });
+    const completion = recordCompletion({
+      taskId: task.id,
+      completedDate: "2026-07-29",
+      note: "Finished early",
+    });
+    getDb()
+      .prepare("UPDATE completion SET created_at = ? WHERE id = ?")
+      .run("2026-07-29 12:00:00", completion.id);
+
+    expect(hasCompletionsSince("2026-07-29 12:00:00")).toBe(true);
+    expect(hasCompletionsSince("2026-07-29 12:00:01")).toBe(false);
+    expect(listCompletionsForDateRange("2026-07-27", "2026-08-02").map((item) => item.note)).toEqual([
+      "Finished early",
+    ]);
   });
 
   it("cascades delete to Completions when the Task is deleted", () => {

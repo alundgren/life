@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDbClient, resetDb, setDb } from "./client";
 import { runMigrations } from "./migrate";
 import { createScheduledTask } from "./task";
-import { listPlannedActivitiesForPlan } from "./plannedActivity";
+import { addPlannedActivity, listPlannedActivitiesForPlan } from "./plannedActivity";
 import {
   createWeeklyPlan,
   createWeeklyPlanWithActivities,
   getWeeklyPlanByWeek,
+  replaceRevisablePlannedActivities,
 } from "./weeklyPlan";
 
 describe("weekly plan data access", () => {
@@ -62,5 +63,64 @@ describe("weekly plan data access", () => {
     ).toThrow();
 
     expect(getWeeklyPlanByWeek("2026-07-20")).toBeUndefined();
+  });
+
+  it("atomically replaces only pending Planned Activities from the revision date onward", () => {
+    const task = createScheduledTask({
+      description: "Bouldering: board and strength",
+      weekday: 2,
+      startTime: "16:00",
+      endTime: "18:00",
+      recurrenceIntervalWeeks: 1,
+    });
+    const plan = createWeeklyPlanWithActivities("2026-07-27", [
+      { taskId: task.id, date: "2026-07-28" },
+      { taskId: task.id, date: "2026-07-29" },
+    ]);
+    addPlannedActivity({
+      weeklyPlanId: plan.id,
+      taskId: task.id,
+      date: "2026-07-30",
+      status: "done",
+    });
+    addPlannedActivity({
+      weeklyPlanId: plan.id,
+      taskId: task.id,
+      date: "2026-07-31",
+      status: "missed",
+    });
+
+    replaceRevisablePlannedActivities(plan.id, "2026-07-29", [
+      { taskId: task.id, date: "2026-08-01" },
+    ]);
+
+    expect(listPlannedActivitiesForPlan(plan.id).map((activity) => [activity.date, activity.status])).toEqual([
+      ["2026-07-28", "pending"],
+      ["2026-07-30", "done"],
+      ["2026-07-31", "missed"],
+      ["2026-08-01", "pending"],
+    ]);
+    expect(getWeeklyPlanByWeek("2026-07-27")?.revisedAt).toBeDefined();
+  });
+
+  it("rolls back a revision replacement when a new Planned Activity cannot be written", () => {
+    const task = createScheduledTask({
+      description: "Bouldering: board and strength",
+      weekday: 2,
+      startTime: "16:00",
+      endTime: "18:00",
+      recurrenceIntervalWeeks: 1,
+    });
+    const plan = createWeeklyPlanWithActivities("2026-07-27", [
+      { taskId: task.id, date: "2026-07-29" },
+    ]);
+
+    expect(() =>
+      replaceRevisablePlannedActivities(plan.id, "2026-07-29", [
+        { taskId: 999, date: "2026-07-30" },
+      ])
+    ).toThrow();
+
+    expect(listPlannedActivitiesForPlan(plan.id).map((activity) => activity.date)).toEqual(["2026-07-29"]);
   });
 });
