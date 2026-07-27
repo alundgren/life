@@ -4,7 +4,12 @@ import { runMigrations } from "./migrate";
 import { createFlexibleTask } from "./task";
 import { createWeeklyPlan } from "./weeklyPlan";
 import { addPlannedActivity } from "./plannedActivity";
-import { listUnprocessedCompletions, markCompletionProcessed, recordCompletion } from "./completion";
+import {
+  listLatestCompletionDatesByTask,
+  listUnprocessedCompletions,
+  markCompletionProcessed,
+  recordCompletion,
+} from "./completion";
 
 describe("completion data access", () => {
   beforeEach(() => {
@@ -87,6 +92,30 @@ describe("completion data access", () => {
 
     const unprocessed = listUnprocessedCompletions();
     expect(unprocessed.map((c) => c.id)).toEqual([second.id]);
+  });
+
+  it("reads the most recent Completion date per Task", () => {
+    const windows = createFlexibleTask({
+      description: "Clean the windows",
+      frequencyText: "about every three months",
+      durationMinutes: 45,
+    });
+    const laundry = createFlexibleTask({
+      description: "Laundry",
+      frequencyText: "weekly",
+      durationMinutes: 15,
+    });
+
+    recordCompletion({ taskId: windows.id, completedDate: "2026-07-01" });
+    recordCompletion({ taskId: windows.id, completedDate: "2026-07-22" });
+    recordCompletion({ taskId: laundry.id, completedDate: "2026-07-14" });
+
+    expect(listLatestCompletionDatesByTask()).toEqual(
+      new Map([
+        [windows.id, "2026-07-22"],
+        [laundry.id, "2026-07-14"],
+      ])
+    );
   });
 
   it("marks a Completion processed with a processed_at timestamp", () => {

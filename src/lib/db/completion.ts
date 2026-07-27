@@ -33,6 +33,11 @@ interface CompletionRow {
   created_at: string;
 }
 
+interface LatestCompletionDateRow {
+  task_id: number;
+  completed_date: string;
+}
+
 const SELECT_COMPLETION_SQL =
   "SELECT id, task_id, planned_activity_id, completed_date, note, processed_at, created_at FROM completion";
 
@@ -101,6 +106,19 @@ export function listUnprocessedCompletions(): Completion[] {
     .prepare(`${SELECT_COMPLETION_SQL} WHERE processed_at IS NULL ORDER BY id`)
     .all() as CompletionRow[];
   return rows.map(rowToCompletion);
+}
+
+/** Most recent Completion date per Task, keyed by task id. */
+export function listLatestCompletionDatesByTask(): Map<number, string> {
+  const rows = getDb()
+    .prepare(
+      `SELECT task_id, MAX(completed_date) as completed_date
+       FROM completion
+       GROUP BY task_id`
+    )
+    .all() as LatestCompletionDateRow[];
+
+  return new Map(rows.map((row) => [row.task_id, row.completed_date]));
 }
 
 /** Marks a Completion as considered for Correction extraction. */

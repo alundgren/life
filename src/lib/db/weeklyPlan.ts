@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db/client";
+import type { AddPlannedActivityInput } from "@/lib/db/plannedActivity";
 
 export interface WeeklyPlan {
   id: number;
@@ -27,6 +28,38 @@ function rowToWeeklyPlan(row: WeeklyPlanRow): WeeklyPlan {
 export function createWeeklyPlan(weekStartDate: string): WeeklyPlan {
   getDb().prepare("INSERT INTO weekly_plan (week_start_date) VALUES (?)").run(weekStartDate);
   return getWeeklyPlanByWeek(weekStartDate)!;
+}
+
+export interface CreateWeeklyPlanWithActivitiesInput {
+  weekStartDate: string;
+  activities: Omit<AddPlannedActivityInput, "weeklyPlanId">[];
+}
+
+/** Creates a Weekly Plan and all of its Planned Activities atomically. */
+export function createWeeklyPlanWithActivities(
+  input: CreateWeeklyPlanWithActivitiesInput
+): WeeklyPlan {
+  const db = getDb();
+  const insertPlan = db.prepare("INSERT INTO weekly_plan (week_start_date) VALUES (?)");
+  const insertActivity = db.prepare(
+    `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status)
+     VALUES (?, ?, ?, ?)`
+  );
+
+  const planId = db.transaction(() => {
+    const result = insertPlan.run(input.weekStartDate);
+    const id = Number(result.lastInsertRowid);
+    for (const activity of input.activities) {
+      insertActivity.run(id, activity.taskId, activity.date, activity.status ?? "pending");
+    }
+    return id;
+  })();
+
+  const plan = getWeeklyPlanByWeek(input.weekStartDate);
+  if (!plan || plan.id !== planId) {
+    throw new Error("Created Weekly Plan could not be read back.");
+  }
+  return plan;
 }
 
 export function getWeeklyPlanByWeek(weekStartDate: string): WeeklyPlan | undefined {

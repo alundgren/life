@@ -19,7 +19,8 @@ pnpm lint    # must exit 0
 pnpm test    # must exit 0
 ```
 
-`pnpm test` runs the service-free unit suite (`vitest.config.ts`) — no real SQLite file, Docker, or Ollama instance required. `pnpm test:integration` (`vitest.integration.config.ts`) is a separate, currently-empty suite for future tests that need real services; it is not part of the gate.
+`pnpm test` runs the service-free unit suite (`vitest.config.ts`) — no real SQLite file, Docker, or Ollama instance required. `pnpm test:integration` (`vitest.integration.config.ts`) is a separate suite for tests that need real services; it is not part of the gate.
+The integration suite is developer-only; agents must not run `pnpm test:integration` or set its opt-in environment variables.
 
 ## Pull requests
 

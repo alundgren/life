@@ -36,4 +36,29 @@ describe("callOllama", () => {
       callOllama("ping", { host: "http://localhost:11434", model: "test-model" })
     ).rejects.toThrow(/500/);
   });
+
+  it("forwards the JSON format option when requested", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ response: '{"activities":[]}' }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await callOllama("plan", {
+      host: "http://localhost:11434",
+      model: "test-model",
+      format: "json",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:11434/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "test-model",
+        prompt: "plan",
+        stream: false,
+        format: "json",
+      }),
+    });
+  });
 });
