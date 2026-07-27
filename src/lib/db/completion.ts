@@ -105,6 +105,26 @@ export function getLatestCompletionDatesByTask(): Map<number, string> {
   return new Map(rows.map((row) => [row.task_id, row.completed_date]));
 }
 
+/** Whether any Completion was recorded at or after a Planner watermark. */
+export function hasCompletionsSince(timestamp: string): boolean {
+  const row = getDb()
+    .prepare("SELECT EXISTS(SELECT 1 FROM completion WHERE created_at >= ?) AS exists_since")
+    .get(timestamp) as { exists_since: number };
+  return row.exists_since === 1;
+}
+
+/** Completions whose completed dates fall within an inclusive calendar-date range. */
+export function listCompletionsForDateRange(startDate: string, endDate: string): Completion[] {
+  const rows = getDb()
+    .prepare(
+      `${SELECT_COMPLETION_SQL}
+       WHERE completed_date >= ? AND completed_date <= ?
+       ORDER BY completed_date ASC, id ASC`
+    )
+    .all(startDate, endDate) as CompletionRow[];
+  return rows.map(rowToCompletion);
+}
+
 /** Completions not yet considered for Correction extraction. */
 export function listUnprocessedCompletions(): Completion[] {
   const rows = getDb()

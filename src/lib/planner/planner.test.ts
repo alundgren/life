@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDbClient, resetDb, setDb } from "@/lib/db/client";
+import { createDbClient, getDb, resetDb, setDb } from "@/lib/db/client";
 import { runMigrations } from "@/lib/db/migrate";
 import { recordCompletion } from "@/lib/db/completion";
+import { applyCorrection } from "@/lib/db/correction";
 import { setMode } from "@/lib/db/mode";
-import { listPlannedActivitiesForPlan } from "@/lib/db/plannedActivity";
+import {
+  listPlannedActivitiesForPlan,
+  updatePlannedActivityStatus,
+} from "@/lib/db/plannedActivity";
 import { createFlexibleTask, createScheduledTask } from "@/lib/db/task";
 import { setTimeBudget } from "@/lib/db/timeBudget";
 import { createWeeklyPlanWithActivities, getWeeklyPlanByWeek } from "@/lib/db/weeklyPlan";
@@ -318,5 +322,90 @@ describe("weekly plan generation", () => {
 
     await expect(runPlannerOnce()).resolves.toBeUndefined();
     expect(getWeeklyPlanByWeek(WEEK_START)).toBeUndefined();
+  });
+
+  it("revises the open remainder after a Completion while preserving frozen activities", async () => {
+    const training = createTraining();
+    const laundry = createLaundry();
+    const cleaning = createFlexibleTask({
+      description: "Clean the windows",
+      frequencyText: "about every three months",
+      durationMinutes: 45,
+    });
+    const plan = createWeeklyPlanWithActivities(WEEK_START, [
+      { taskId: training.id, date: "2026-07-28" },
+      { taskId: laundry.id, date: "2026-07-29" },
+      { taskId: training.id, date: "2026-07-30" },
+    ]);
+    const [past, , future] = listPlannedActivitiesForPlan(plan.id);
+    updatePlannedActivityStatus(future.id, "done");
+    getDb()
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = ?")
+      .run(plan.id);
+    recordCompletion({
+      taskId: laundry.id,
+      completedDate: "2026-07-29",
+      note: "Finished early",
+    });
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({
+        activities: [
+          { taskId: cleaning.id, date: "2026-07-31" },
+          { taskId: laundry.id, date: "2026-07-28" },
+          { taskId: training.id, date: "2026-07-30" },
+          { taskId: cleaning.id, date: "2026-07-31" },
+          { taskId: 9999, date: "2026-08-01" },
+        ],
+      })
+    );
+
+    await runPlannerOnce();
+
+    expect(listPlannedActivitiesForPlan(plan.id).map((activity) => [activity.taskId, activity.date, activity.status])).toEqual([
+      [training.id, past.date, "pending"],
+      [future.taskId, future.date, "done"],
+      [cleaning.id, "2026-07-31", "pending"],
+    ]);
+    expect(callOllamaMock.mock.calls[0][0]).toContain("Today is 2026-07-29");
+    expect(callOllamaMock.mock.calls[0][0]).toContain("Finished early");
+    expect(callOllamaMock.mock.calls[0][0]).toContain("2026-07-28 | pending");
+    expect(getPlannerStatus().lastResult).toContain("Revised week 2026-07-27");
+  });
+
+  it("revises after a Correction and uses the corrected Task description in the prompt", async () => {
+    const laundry = createLaundry();
+    const plan = createWeeklyPlanWithActivities(WEEK_START, [
+      { taskId: laundry.id, date: "2026-07-30" },
+    ]);
+    getDb()
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = ?")
+      .run(plan.id);
+    applyCorrection(laundry.id, "Wash bedding and towels");
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({ activities: [{ taskId: laundry.id, date: "2026-07-31" }] })
+    );
+
+    await runPlannerOnce();
+
+    expect(callOllamaMock.mock.calls[0][0]).toContain("Wash bedding and towels");
+    expect(listPlannedActivitiesForPlan(plan.id).map((activity) => activity.date)).toEqual(["2026-07-31"]);
+  });
+
+  it("leaves the plan and watermark untouched when a revision response has no usable entries", async () => {
+    const laundry = createLaundry();
+    const plan = createWeeklyPlanWithActivities(WEEK_START, [
+      { taskId: laundry.id, date: "2026-07-30" },
+    ]);
+    getDb()
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = ?")
+      .run(plan.id);
+    recordCompletion({ taskId: laundry.id, completedDate: "2026-07-29" });
+    callOllamaMock.mockResolvedValue('{"activities": [{"taskId": 9999, "date": "2026-07-30"}]}');
+
+    await runPlannerOnce();
+
+    expect(listPlannedActivitiesForPlan(plan.id).map((activity) => activity.date)).toEqual(["2026-07-30"]);
+    expect(getWeeklyPlanByWeek(WEEK_START)?.revisedAt).toBe("2026-07-01 00:00:00");
+    expect(getPlannerStatus().lastStatus).toBe("error");
   });
 });
