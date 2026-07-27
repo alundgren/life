@@ -8,7 +8,12 @@ import {
 import { hasCorrectionsSince } from "@/lib/db/correction";
 import { getMode, type ModeValue } from "@/lib/db/mode";
 import { listPlannedActivitiesForPlan, type PlannedActivity } from "@/lib/db/plannedActivity";
-import { listTasks, taskDurationMinutes, type Task } from "@/lib/db/task";
+import {
+  listTasks,
+  taskDurationMinutes,
+  type FlexibleTask,
+  type ScheduledTask,
+} from "@/lib/db/task";
 import { getTimeBudget } from "@/lib/db/timeBudget";
 import {
   createWeeklyPlanWithActivities,
@@ -94,15 +99,47 @@ function weekDates(weekStart: string): string[] {
   );
 }
 
-function taskLine(task: Task, lastCompletionDate: string | undefined): string {
+function weekStartForDate(date: string): string {
+  const [year, month, day] = date.slice(0, 10).split("-").map(Number);
+  return currentWeekStart(new Date(year, month - 1, day));
+}
+
+function scheduledTaskRecursInWeek(task: ScheduledTask, weekStart: string): boolean {
+  const anchorWeek = weekStartForDate(task.createdAt);
+  const [anchorYear, anchorMonth, anchorDay] = anchorWeek.split("-").map(Number);
+  const [weekYear, weekMonth, weekDay] = weekStart.split("-").map(Number);
+  const weeksSinceAnchor =
+    (Date.UTC(weekYear, weekMonth - 1, weekDay) -
+      Date.UTC(anchorYear, anchorMonth - 1, anchorDay)) /
+    (7 * 24 * 60 * 60 * 1000);
+
+  return weeksSinceAnchor >= 0 && weeksSinceAnchor % task.recurrenceIntervalWeeks === 0;
+}
+
+interface ScheduledPlacement {
+  task: ScheduledTask;
+  activity: NewPlannedActivity;
+}
+
+function scheduledPlacements(
+  tasks: ScheduledTask[],
+  weekStart: string,
+  dates: string[]
+): ScheduledPlacement[] {
+  return tasks.flatMap((task) => {
+    if (!scheduledTaskRecursInWeek(task, weekStart)) {
+      return [];
+    }
+    return [{ task, activity: { taskId: task.id, date: dates[(task.weekday + 6) % 7] } }];
+  });
+}
+
+function assumedBusyHours(mode: ModeValue): string {
+  return mode === "work" ? "Mon-Fri 09:00-17:00" : "the week is mostly open";
+}
+
+function taskLine(task: FlexibleTask, lastCompletionDate: string | undefined): string {
   const duration = `${taskDurationMinutes(task)} minutes`;
-  if (task.kind === "scheduled") {
-    return (
-      `- id ${task.id} | scheduled | "${task.description}" | ${duration} | ` +
-      `${WEEKDAY_NAMES[task.weekday]} ${task.startTime}-${task.endTime}, ` +
-      `recurs every ${task.recurrenceIntervalWeeks} week(s)`
-    );
-  }
   return (
     `- id ${task.id} | flexible | "${task.description}" | ${duration} | ` +
     `wanted ${task.frequencyText}, ` +
@@ -115,13 +152,21 @@ function buildPrompt(
   dates: string[],
   mode: ModeValue,
   timeBudgetMinutes: number | undefined,
-  tasks: Task[],
+  flexibleTasks: FlexibleTask[],
+  fixedPlacements: ScheduledPlacement[],
   lastCompletionDates: Map<number, string>
 ): string {
   // dates[0] is the Monday, so the weekday name follows from the offset.
   const days = dates.map((date, offset) => `${date} (${WEEKDAY_NAMES[(offset + 1) % 7]})`).join("\n");
-  const taskLines = tasks
+  const taskLines = flexibleTasks
     .map((task) => taskLine(task, lastCompletionDates.get(task.id)))
+    .join("\n");
+  const fixedPlacementLines = fixedPlacements
+    .map(
+      ({ task, activity }) =>
+        `- ${activity.date} | ${WEEKDAY_NAMES[task.weekday]} | ${task.startTime}-${task.endTime} | ` +
+        `"${task.description}" | ${taskDurationMinutes(task)} minutes`
+    )
     .join("\n");
 
   return [
@@ -130,15 +175,18 @@ function buildPrompt(
     `Week starting Monday ${weekStart}. Its seven days are:`,
     days,
     "",
-    `Current mode: ${mode}`,
+    `Current mode: ${mode}; assumed-busy hours: ${assumedBusyHours(mode)}.`,
     `Weekly time budget for flexible tasks: ${timeBudgetMinutes ?? "unknown"} minutes`,
     "",
-    "Tasks:",
+    "Fixed Scheduled Task placements (immovable; honour them regardless of assumed-busy hours):",
+    fixedPlacementLines || "(none)",
+    "",
+    "Flexible Tasks to place:",
     taskLines || "(none)",
     "",
-    "Place a scheduled task on its own weekday, only on the weeks it recurs.",
-    "Place a flexible task on a day of your choosing when its frequency says it is due,",
+    "Place each Flexible Task on a day of your choosing when its frequency says it is due,",
     "keeping the total duration of flexible tasks within the weekly time budget.",
+    "Do not move, duplicate, or include a fixed Scheduled Task in your response.",
     "",
     "Respond with JSON only, in exactly this shape, using only the ids and dates above:",
     '{"activities": [{"taskId": 1, "date": "' + dates[0] + '"}]}',
@@ -163,14 +211,23 @@ function buildRevisionPrompt(
   today: string,
   mode: ModeValue,
   timeBudgetMinutes: number | undefined,
-  tasks: Task[],
+  flexibleTasks: FlexibleTask[],
+  fixedPlacements: ScheduledPlacement[],
   lastCompletionDates: Map<number, string>,
   frozenActivities: PlannedActivity[],
   revisableActivities: PlannedActivity[],
   completions: Completion[]
 ): string {
   return [
-    buildPrompt(weekStart, dates, mode, timeBudgetMinutes, tasks, lastCompletionDates),
+    buildPrompt(
+      weekStart,
+      dates,
+      mode,
+      timeBudgetMinutes,
+      flexibleTasks,
+      fixedPlacements,
+      lastCompletionDates
+    ),
     "",
     `Today is ${today}. Revise only today and the remaining days of this week; do not plan past dates.`,
     "Frozen Planned Activities (do not duplicate or change these):",
@@ -232,22 +289,22 @@ function parsePlannedActivities(
   knownTaskIds: Set<number>,
   datesInWeek: Set<string>,
   blockedTaskDates: Set<string> = new Set()
-): NewPlannedActivity[] {
+): NewPlannedActivity[] | undefined {
   const json = extractJsonObject(response);
   if (json === undefined) {
-    return [];
+    return undefined;
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
   } catch {
-    return [];
+    return undefined;
   }
 
   const entries = (parsed as { activities?: unknown }).activities;
   if (!Array.isArray(entries)) {
-    return [];
+    return undefined;
   }
 
   const seen = new Set<string>();
@@ -292,18 +349,58 @@ export async function runPlannerOnce(): Promise<void> {
       return;
     }
 
-    const env = getEnv();
     const dates = weekDates(weekStart);
     const tasks = listTasks();
     const mode = getMode();
+    const scheduledTasks = tasks.filter(
+      (task): task is ScheduledTask => task.kind === "scheduled"
+    );
+    const flexibleTasks = tasks.filter(
+      (task): task is FlexibleTask => task.kind === "flexible"
+    );
+    const fixedPlacements = scheduledPlacements(scheduledTasks, weekStart, dates);
+
+    if (!existingPlan && flexibleTasks.length === 0) {
+      if (fixedPlacements.length === 0) {
+        recordRun.run(new Date().toISOString(), "ok", `Week ${weekStart} has nothing due.`);
+        return;
+      }
+
+      createWeeklyPlanWithActivities(
+        weekStart,
+        fixedPlacements.map(({ activity }) => activity)
+      );
+      recordRun.run(
+        new Date().toISOString(),
+        "ok",
+        `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and 0 model-placed Planned Activities.`
+      );
+      return;
+    }
+
+    if (existingPlan && flexibleTasks.length === 0) {
+      recordRun.run(new Date().toISOString(), "ok", `Week ${weekStart} already planned.`);
+      return;
+    }
+
     const today = formatLocalDate(new Date());
     const lastCompletionDates = getLatestCompletionDatesByTask();
     const existingActivities = existingPlan ? listPlannedActivitiesForPlan(existingPlan.id) : [];
+    const scheduledTaskIds = new Set(scheduledTasks.map((task) => task.id));
+    const scheduledTasksById = new Map(scheduledTasks.map((task) => [task.id, task]));
+    const promptFixedPlacements = existingPlan
+      ? existingActivities.flatMap((activity) => {
+          const task = scheduledTasksById.get(activity.taskId);
+          return task === undefined ? [] : [{ task, activity }];
+        })
+      : fixedPlacements;
     const frozenActivities = existingActivities.filter(
-      (activity) => activity.status !== "pending" || activity.date < today
+      (activity) =>
+        scheduledTaskIds.has(activity.taskId) || activity.status !== "pending" || activity.date < today
     );
     const revisableActivities = existingActivities.filter(
-      (activity) => activity.status === "pending" && activity.date >= today
+      (activity) =>
+        !scheduledTaskIds.has(activity.taskId) && activity.status === "pending" && activity.date >= today
     );
     const prompt = existingPlan
       ? buildRevisionPrompt(
@@ -312,7 +409,8 @@ export async function runPlannerOnce(): Promise<void> {
           today,
           mode,
           getTimeBudget(mode),
-          tasks,
+          flexibleTasks,
+          promptFixedPlacements,
           lastCompletionDates,
           frozenActivities,
           revisableActivities,
@@ -323,10 +421,12 @@ export async function runPlannerOnce(): Promise<void> {
           dates,
           mode,
           getTimeBudget(mode),
-          tasks,
+          flexibleTasks,
+          promptFixedPlacements,
           lastCompletionDates
         );
 
+    const env = getEnv();
     const response = await callOllama(prompt, {
       host: env.OLLAMA_HOST,
       model: env.OLLAMA_MODEL,
@@ -335,16 +435,16 @@ export async function runPlannerOnce(): Promise<void> {
 
     const activities = parsePlannedActivities(
       response,
-      new Set(tasks.map((task) => task.id)),
+      new Set(flexibleTasks.map((task) => task.id)),
       new Set(existingPlan ? dates.filter((date) => date >= today) : dates),
       new Set(frozenActivities.map((activity) => `${activity.taskId}:${activity.date}`))
     );
 
-    if (activities.length === 0) {
+    if (activities === undefined) {
       recordRun.run(
         new Date().toISOString(),
         "error",
-        `Ollama returned no usable Planned Activities for week ${weekStart}.`
+        `Ollama returned no usable response for week ${weekStart}.`
       );
       return;
     }
@@ -361,13 +461,17 @@ export async function runPlannerOnce(): Promise<void> {
       return;
     }
 
-    createWeeklyPlanWithActivities(weekStart, activities);
+    const plannedActivities = [...fixedPlacements.map(({ activity }) => activity), ...activities];
+    if (plannedActivities.length === 0) {
+      recordRun.run(new Date().toISOString(), "ok", `Week ${weekStart} has nothing due.`);
+      return;
+    }
+
+    createWeeklyPlanWithActivities(weekStart, plannedActivities);
     recordRun.run(
       new Date().toISOString(),
       "ok",
-      `Planned week ${weekStart}: ${activities.length} Planned ${
-        activities.length === 1 ? "Activity" : "Activities"
-      }.`
+      `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and ${activities.length} model-placed Planned Activities.`
     );
   } catch (error) {
     recordRun.run(
