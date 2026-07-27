@@ -7,5 +7,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // Service-dependent tests belong to vitest.integration.config.ts only.
+    exclude: ["**/node_modules/**", "src/**/*.integration.test.ts"],
   },
 });

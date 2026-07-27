@@ -29,6 +29,36 @@ export function createWeeklyPlan(weekStartDate: string): WeeklyPlan {
   return getWeeklyPlanByWeek(weekStartDate)!;
 }
 
+export interface NewPlannedActivity {
+  taskId: number;
+  date: string;
+}
+
+/**
+ * Creates a Weekly Plan together with all of its Planned Activities in one transaction, so a
+ * generated plan can never be committed half-empty and then look "already generated".
+ */
+export function createWeeklyPlanWithActivities(
+  weekStartDate: string,
+  activities: NewPlannedActivity[]
+): WeeklyPlan {
+  const db = getDb();
+  const insertPlan = db.prepare("INSERT INTO weekly_plan (week_start_date) VALUES (?)");
+  const insertActivity = db.prepare(
+    `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status)
+     VALUES (?, ?, ?, 'pending')`
+  );
+
+  db.transaction(() => {
+    const planId = Number(insertPlan.run(weekStartDate).lastInsertRowid);
+    for (const activity of activities) {
+      insertActivity.run(planId, activity.taskId, activity.date);
+    }
+  })();
+
+  return getWeeklyPlanByWeek(weekStartDate)!;
+}
+
 export function getWeeklyPlanByWeek(weekStartDate: string): WeeklyPlan | undefined {
   const row = getDb()
     .prepare(

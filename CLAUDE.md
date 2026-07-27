@@ -19,7 +19,9 @@ pnpm lint    # must exit 0
 pnpm test    # must exit 0
 ```
 
-`pnpm test` runs the service-free unit suite (`vitest.config.ts`) — no real SQLite file, Docker, or Ollama instance required. `pnpm test:integration` (`vitest.integration.config.ts`) is a separate, currently-empty suite for future tests that need real services; it is not part of the gate.
+`pnpm test` runs the service-free unit suite (`vitest.config.ts`) — no real SQLite file, Docker, or Ollama instance required. `pnpm test:integration` (`vitest.integration.config.ts`) is a separate suite for tests that need real services; it is not part of the gate.
+
+**`pnpm test:integration` is run by the developer only — agents must never run it.** Its tests drive a real Ollama instance and additionally self-skip unless `RUN_OLLAMA_INTEGRATION_TESTS` is set.
 
 ## Pull requests
 
@@ -37,7 +39,8 @@ pnpm test    # must exit 0
 
 - The Planner (`src/lib/planner/planner.ts`) starts automatically at boot from `src/instrumentation.ts`, right after migrations run. `startPlanner()` / `stopPlanner()` control its lifecycle; `getPlannerStatus()` reports whether it's running and its last recorded run.
 - The Planner talks to Ollama only through the single client wrapper `src/lib/ollama/client.ts` (`callOllama`) — no other code calls Ollama directly.
-- Each Planner run is recorded as a heartbeat row in the `planner_run` table (`ran_at`/`status`/`result`) and surfaced through the placeholder API/page.
+- Each Planner run generates the current week's Weekly Plan if that week has none yet: it prompts Ollama for JSON, drops entries naming an unknown Task or a date outside the week, and writes the plan and its Planned Activities in one transaction. A week that is already planned is skipped without calling Ollama.
+- Each Planner run is recorded in the `planner_run` table (`ran_at`/`status`/`result`, `result` summarising what the run did) and surfaced through the placeholder API/page.
 
 ## Docker Compose (local dev)
 

@@ -95,6 +95,16 @@ export function getCompletionById(id: number): Completion | undefined {
   return row ? rowToCompletion(row) : undefined;
 }
 
+/** The most recent Completion date per Task, keyed by Task id. Never-completed Tasks are absent. */
+export function getLatestCompletionDatesByTask(): Map<number, string> {
+  const rows = getDb()
+    .prepare(
+      "SELECT task_id, MAX(completed_date) AS completed_date FROM completion GROUP BY task_id"
+    )
+    .all() as { task_id: number; completed_date: string }[];
+  return new Map(rows.map((row) => [row.task_id, row.completed_date]));
+}
+
 /** Completions not yet considered for Correction extraction. */
 export function listUnprocessedCompletions(): Completion[] {
   const rows = getDb()

@@ -4,7 +4,12 @@ import { runMigrations } from "./migrate";
 import { createFlexibleTask } from "./task";
 import { createWeeklyPlan } from "./weeklyPlan";
 import { addPlannedActivity } from "./plannedActivity";
-import { listUnprocessedCompletions, markCompletionProcessed, recordCompletion } from "./completion";
+import {
+  getLatestCompletionDatesByTask,
+  listUnprocessedCompletions,
+  markCompletionProcessed,
+  recordCompletion,
+} from "./completion";
 
 describe("completion data access", () => {
   beforeEach(() => {
@@ -103,6 +108,26 @@ describe("completion data access", () => {
       .prepare("SELECT processed_at FROM completion WHERE id = ?")
       .get(completion.id) as { processed_at: string | null };
     expect(row.processed_at).not.toBeNull();
+  });
+
+  it("reports the most recent Completion date per Task, omitting Tasks never completed", () => {
+    const cleaned = createFlexibleTask({
+      description: "Clean the windows",
+      frequencyText: "about every three months",
+      durationMinutes: 45,
+    });
+    const neverDone = createFlexibleTask({
+      description: "Descale the kettle",
+      frequencyText: "about twice a year",
+      durationMinutes: 20,
+    });
+    recordCompletion({ taskId: cleaned.id, completedDate: "2026-07-21" });
+    recordCompletion({ taskId: cleaned.id, completedDate: "2026-06-30" });
+
+    const latest = getLatestCompletionDatesByTask();
+
+    expect(latest.get(cleaned.id)).toBe("2026-07-21");
+    expect(latest.has(neverDone.id)).toBe(false);
   });
 
   it("cascades delete to Completions when the Task is deleted", () => {
