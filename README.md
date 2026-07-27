@@ -32,6 +32,7 @@ The app is available at [http://localhost:3000](http://localhost:3000).
 - The SQLite file lives in a named volume (`sqlite-data`) and survives `docker compose down` / `up`. The pulled Ollama model lives in its own named volume (`ollama-data`) so it isn't re-downloaded on every restart.
 - The project directory is bind-mounted into the `app` container, so editing source on the host hot-reloads the running dev server. `node_modules` and `.next` stay in anonymous volumes so the container's own (Linux) install isn't shadowed by the host's.
 - Run `docker compose down -v` to also drop the named volumes (fresh database and a re-pulled model on next `up`).
+- Ollama is published on `127.0.0.1:11434` so host-run tooling (see "Integration suite" below) can reach it. It is bound to loopback deliberately — Docker's published ports bypass the host firewall, and Ollama is unauthenticated. The production stack publishes nothing.
 
 ## Production deployment (Raspberry Pi 5)
 
@@ -65,4 +66,19 @@ pnpm lint
 pnpm test
 ```
 
-All three must exit `0` before pushing. `pnpm test` runs the service-free unit suite only — no real SQLite file, Docker, or Ollama instance required. `pnpm test:integration` is a separate, currently-empty suite reserved for tests that need real services.
+All three must exit `0` before pushing. `pnpm test` runs the service-free unit suite only — no real SQLite file, Docker, or Ollama instance required.
+
+### Integration suite (developer only)
+
+`pnpm test:integration` is a separate suite for tests that need real services — currently the Planner's weekly-plan generation against a real Ollama. It is deliberately **not** part of the verification gate above, and agents must never run it.
+
+```bash
+RUN_OLLAMA_INTEGRATION_TESTS=1 pnpm test:integration
+```
+
+- Without `RUN_OLLAMA_INTEGRATION_TESTS` every test self-skips, so a stray run passes trivially instead of hanging. Output reading `1 skipped` means the opt-in never reached the process.
+- **Vitest does not read `.env`.** The suite falls back to `http://localhost:11434` and `qwen2.5:3b`; pass `OLLAMA_HOST` / `OLLAMA_MODEL` on the command line if yours differ.
+- Ollama must be reachable from the host with the model already pulled. `docker compose up` covers both — the `ollama` service publishes `127.0.0.1:11434`, and pulls `OLLAMA_MODEL` before reporting healthy. Running `ollama serve` natively works too.
+- `curl http://localhost:11434/api/tags` is the quickest check: it lists the pulled models, and a connection error there means the suite will fail the same way.
+- A cold model load can be slow, so the first call may approach the 180s timeout; the `curl` above warms it.
+- `Ollama returned no usable Planned Activities …` means Ollama answered but the model's JSON didn't survive validation — that is a finding about the model, not a setup failure.
