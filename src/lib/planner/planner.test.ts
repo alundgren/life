@@ -27,6 +27,9 @@ function seedDb() {
   callOllamaMock.mockReset();
 }
 
+// These cover start/stop/interval only. The mocked response deliberately yields no Planned
+// Activities, so no Weekly Plan is written and every tick still reaches Ollama — the run count
+// stays the honest measure of the loop, rather than of the "already planned" skip.
 describe("planner lifecycle", () => {
   beforeEach(seedDb);
 

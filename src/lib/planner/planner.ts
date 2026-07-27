@@ -71,7 +71,7 @@ function formatLocalDate(date: Date): string {
 }
 
 /** The Monday of the week the given moment falls in, in server-local time. */
-function weekStartDate(now: Date): string {
+function currentWeekStart(now: Date): string {
   const daysSinceMonday = (now.getDay() + 6) % 7;
   return formatLocalDate(
     new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday)
@@ -183,7 +183,7 @@ function extractJsonObject(text: string): string | undefined {
 function parsePlannedActivities(
   response: string,
   knownTaskIds: Set<number>,
-  plannedDates: Set<string>
+  datesInWeek: Set<string>
 ): NewPlannedActivity[] {
   const json = extractJsonObject(response);
   if (json === undefined) {
@@ -213,7 +213,7 @@ function parsePlannedActivities(
     if (typeof taskId !== "number" || !Number.isInteger(taskId) || !knownTaskIds.has(taskId)) {
       continue;
     }
-    if (typeof date !== "string" || !plannedDates.has(date)) {
+    if (typeof date !== "string" || !datesInWeek.has(date)) {
       continue;
     }
     const key = `${taskId}:${date}`;
@@ -237,7 +237,7 @@ export async function runPlannerOnce(): Promise<void> {
   );
 
   try {
-    const weekStart = weekStartDate(new Date());
+    const weekStart = currentWeekStart(new Date());
     if (getWeeklyPlanByWeek(weekStart)) {
       recordRun.run(new Date().toISOString(), "ok", `Week ${weekStart} already planned.`);
       return;
