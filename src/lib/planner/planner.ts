@@ -186,6 +186,7 @@ function buildPrompt(
     "",
     "Place each Flexible Task on a day of your choosing when its frequency says it is due,",
     "keeping the total duration of flexible tasks within the weekly time budget.",
+    "List Flexible Tasks most-urgent-first; entries beyond the Time Budget will be dropped.",
     "Do not move, duplicate, or include a fixed Scheduled Task in your response.",
     "",
     "Respond with JSON only, in exactly this shape, using only the ids and dates above:",
@@ -333,6 +334,49 @@ function parsePlannedActivities(
 }
 
 /**
+ * Admits model-proposed Flexible Planned Activities in response order while the remaining weekly
+ * Time Budget can cover their Durations. An unconfigured budget preserves the model proposal.
+ */
+function applyTimeBudget(
+  activities: NewPlannedActivity[],
+  flexibleTasks: FlexibleTask[],
+  timeBudgetMinutes: number | undefined,
+  frozenActivities: PlannedActivity[] = []
+): { activities: NewPlannedActivity[]; deferred: number } {
+  if (timeBudgetMinutes === undefined) {
+    return { activities, deferred: 0 };
+  }
+
+  const tasksById = new Map(flexibleTasks.map((task) => [task.id, task]));
+  const frozenMinutes = frozenActivities.reduce((total, activity) => {
+    const task = tasksById.get(activity.taskId);
+    return total + (task === undefined ? 0 : taskDurationMinutes(task));
+  }, 0);
+  let remainingMinutes = Math.max(0, timeBudgetMinutes - frozenMinutes);
+  const admitted: NewPlannedActivity[] = [];
+  let deferred = 0;
+
+  for (const activity of activities) {
+    const durationMinutes = taskDurationMinutes(tasksById.get(activity.taskId)!);
+    if (durationMinutes <= remainingMinutes) {
+      admitted.push(activity);
+      remainingMinutes -= durationMinutes;
+    } else {
+      deferred++;
+    }
+  }
+
+  return { activities: admitted, deferred };
+}
+
+function deferredResultSuffix(deferred: number): string {
+  if (deferred === 0) {
+    return "";
+  }
+  return ` ${deferred} model-proposed Planned ${deferred === 1 ? "Activity was" : "Activities were"} deferred for the Time Budget.`;
+}
+
+/**
  * Generates this week's Weekly Plan when none exists. An existing plan is revised only after new
  * Completion or Correction feedback has arrived since the Planner last wrote it.
  */
@@ -352,6 +396,7 @@ export async function runPlannerOnce(): Promise<void> {
     const dates = weekDates(weekStart);
     const tasks = listTasks();
     const mode = getMode();
+    const timeBudgetMinutes = getTimeBudget(mode);
     const scheduledTasks = tasks.filter(
       (task): task is ScheduledTask => task.kind === "scheduled"
     );
@@ -408,7 +453,7 @@ export async function runPlannerOnce(): Promise<void> {
           dates,
           today,
           mode,
-          getTimeBudget(mode),
+          timeBudgetMinutes,
           flexibleTasks,
           promptFixedPlacements,
           lastCompletionDates,
@@ -420,7 +465,7 @@ export async function runPlannerOnce(): Promise<void> {
           weekStart,
           dates,
           mode,
-          getTimeBudget(mode),
+          timeBudgetMinutes,
           flexibleTasks,
           promptFixedPlacements,
           lastCompletionDates
@@ -433,14 +478,14 @@ export async function runPlannerOnce(): Promise<void> {
       format: "json",
     });
 
-    const activities = parsePlannedActivities(
+    const parsedActivities = parsePlannedActivities(
       response,
       new Set(flexibleTasks.map((task) => task.id)),
       new Set(existingPlan ? dates.filter((date) => date >= today) : dates),
       new Set(frozenActivities.map((activity) => `${activity.taskId}:${activity.date}`))
     );
 
-    if (activities === undefined) {
+    if (parsedActivities === undefined) {
       recordRun.run(
         new Date().toISOString(),
         "error",
@@ -449,6 +494,13 @@ export async function runPlannerOnce(): Promise<void> {
       return;
     }
 
+    const { activities, deferred } = applyTimeBudget(
+      parsedActivities,
+      flexibleTasks,
+      timeBudgetMinutes,
+      frozenActivities
+    );
+
     if (existingPlan) {
       replaceRevisablePlannedActivities(existingPlan.id, today, activities);
       recordRun.run(
@@ -456,14 +508,18 @@ export async function runPlannerOnce(): Promise<void> {
         "ok",
         `Revised week ${weekStart} from ${today}: ${activities.length} Planned ${
           activities.length === 1 ? "Activity" : "Activities"
-        }.`
+        }.${deferredResultSuffix(deferred)}`
       );
       return;
     }
 
     const plannedActivities = [...fixedPlacements.map(({ activity }) => activity), ...activities];
     if (plannedActivities.length === 0) {
-      recordRun.run(new Date().toISOString(), "ok", `Week ${weekStart} has nothing due.`);
+      recordRun.run(
+        new Date().toISOString(),
+        "ok",
+        `Week ${weekStart} has nothing due.${deferredResultSuffix(deferred)}`
+      );
       return;
     }
 
@@ -471,7 +527,7 @@ export async function runPlannerOnce(): Promise<void> {
     recordRun.run(
       new Date().toISOString(),
       "ok",
-      `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and ${activities.length} model-placed Planned Activities.`
+      `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and ${activities.length} model-placed Planned Activities.${deferredResultSuffix(deferred)}`
     );
   } catch (error) {
     recordRun.run(

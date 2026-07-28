@@ -343,6 +343,7 @@ describe("weekly plan generation", () => {
     expect(prompt).toContain("Do the laundry");
     expect(prompt).toContain("15 minutes");
     expect(prompt).toContain("about every week");
+    expect(prompt).toContain("most-urgent-first");
   });
 
   it("tells Ollama when each Flexible Task was last completed", async () => {
@@ -395,6 +396,159 @@ describe("weekly plan generation", () => {
 
     const activities = listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id);
     expect(activities.map((a) => a.date)).toEqual(["2026-07-30", "2026-07-31"]);
+  });
+
+  it("keeps Flexible Planned Activities within the Time Budget in Ollama's order", async () => {
+    setTimeBudget("work", 60);
+    const urgent = createFlexibleTask({
+      description: "Urgent task",
+      frequencyText: "weekly",
+      durationMinutes: 45,
+    });
+    const lessUrgent = createFlexibleTask({
+      description: "Less urgent task",
+      frequencyText: "weekly",
+      durationMinutes: 30,
+    });
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({
+        activities: [
+          { taskId: urgent.id, date: "2026-07-30" },
+          { taskId: lessUrgent.id, date: "2026-07-31" },
+        ],
+      })
+    );
+
+    await runPlannerOnce();
+
+    const activities = listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id);
+    expect(activities.map((activity) => activity.taskId)).toEqual([urgent.id]);
+    expect(getPlannerStatus().lastResult).toContain("1 model-proposed Planned Activity was deferred");
+  });
+
+  it("skips an oversized Flexible Task and continues with later entries", async () => {
+    setTimeBudget("work", 60);
+    const oversized = createFlexibleTask({
+      description: "Oversized task",
+      frequencyText: "weekly",
+      durationMinutes: 75,
+    });
+    const smaller = createFlexibleTask({
+      description: "Smaller task",
+      frequencyText: "weekly",
+      durationMinutes: 30,
+    });
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({
+        activities: [
+          { taskId: oversized.id, date: "2026-07-30" },
+          { taskId: smaller.id, date: "2026-07-31" },
+        ],
+      })
+    );
+
+    await runPlannerOnce();
+
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id).map((activity) => activity.taskId)
+    ).toEqual([smaller.id]);
+  });
+
+  it("charges each placement of the same Flexible Task against the Time Budget", async () => {
+    setTimeBudget("work", 60);
+    const laundry = createFlexibleTask({
+      description: "Do the laundry",
+      frequencyText: "twice weekly",
+      durationMinutes: 30,
+    });
+    const cleaning = createFlexibleTask({
+      description: "Clean the kitchen",
+      frequencyText: "weekly",
+      durationMinutes: 15,
+    });
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({
+        activities: [
+          { taskId: laundry.id, date: "2026-07-29" },
+          { taskId: laundry.id, date: "2026-07-30" },
+          { taskId: cleaning.id, date: "2026-07-31" },
+        ],
+      })
+    );
+
+    await runPlannerOnce();
+
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id).map((activity) => [
+        activity.taskId,
+        activity.date,
+      ])
+    ).toEqual([
+      [laundry.id, "2026-07-29"],
+      [laundry.id, "2026-07-30"],
+    ]);
+  });
+
+  it("does not charge Scheduled Tasks against the Time Budget", async () => {
+    setTimeBudget("work", 15);
+    const training = createTraining();
+    const laundry = createLaundry();
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({ activities: [{ taskId: laundry.id, date: "2026-07-30" }] })
+    );
+
+    await runPlannerOnce();
+
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id).map((activity) => activity.taskId)
+    ).toEqual([training.id, laundry.id]);
+  });
+
+  it("uses the Time Budget for the current Mode and treats zero as a real budget", async () => {
+    setTimeBudget("work", 0);
+    setTimeBudget("vacation", 30);
+    const laundry = createLaundry();
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({ activities: [{ taskId: laundry.id, date: "2026-07-30" }] })
+    );
+
+    await runPlannerOnce();
+    expect(getWeeklyPlanByWeek(WEEK_START)).toBeUndefined();
+    expect(getPlannerStatus().lastResult).toContain("1 model-proposed Planned Activity was deferred");
+
+    setMode("vacation");
+    await runPlannerOnce();
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id).map((activity) => activity.taskId)
+    ).toEqual([laundry.id]);
+  });
+
+  it("does not enforce a Time Budget when the current Mode has no configured row", async () => {
+    getDb().prepare("DELETE FROM time_budget WHERE mode = 'work'").run();
+    const first = createFlexibleTask({
+      description: "First task",
+      frequencyText: "weekly",
+      durationMinutes: 45,
+    });
+    const second = createFlexibleTask({
+      description: "Second task",
+      frequencyText: "weekly",
+      durationMinutes: 45,
+    });
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({
+        activities: [
+          { taskId: first.id, date: "2026-07-30" },
+          { taskId: second.id, date: "2026-07-31" },
+        ],
+      })
+    );
+
+    await runPlannerOnce();
+
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id).map((activity) => activity.taskId)
+    ).toEqual([first.id, second.id]);
   });
 
   it("records an error and writes nothing when no entry survives validation", async () => {
@@ -498,6 +652,52 @@ describe("weekly plan generation", () => {
     expect(callOllamaMock.mock.calls[0][0]).toContain("Finished early");
     expect(callOllamaMock.mock.calls[0][0]).toContain("2026-07-28 | pending");
     expect(getPlannerStatus().lastResult).toContain("Revised week 2026-07-27");
+  });
+
+  it("charges frozen Flexible Planned Activities before revising the open remainder", async () => {
+    setTimeBudget("work", 60);
+    const completed = createFlexibleTask({
+      description: "Completed task",
+      frequencyText: "weekly",
+      durationMinutes: 45,
+    });
+    const proposed = createFlexibleTask({
+      description: "Proposed task",
+      frequencyText: "weekly",
+      durationMinutes: 30,
+    });
+    const smaller = createFlexibleTask({
+      description: "Smaller task",
+      frequencyText: "weekly",
+      durationMinutes: 15,
+    });
+    const plan = createWeeklyPlanWithActivities(WEEK_START, [
+      { taskId: completed.id, date: "2026-07-28" },
+    ]);
+    const [frozen] = listPlannedActivitiesForPlan(plan.id);
+    updatePlannedActivityStatus(frozen.id, "done");
+    getDb()
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = ?")
+      .run(plan.id);
+    recordCompletion({ taskId: completed.id, completedDate: "2026-07-29" });
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({
+        activities: [
+          { taskId: proposed.id, date: "2026-07-30" },
+          { taskId: smaller.id, date: "2026-07-31" },
+        ],
+      })
+    );
+
+    await runPlannerOnce();
+
+    expect(
+      listPlannedActivitiesForPlan(plan.id).map((activity) => [activity.taskId, activity.date])
+    ).toEqual([
+      [completed.id, "2026-07-28"],
+      [smaller.id, "2026-07-31"],
+    ]);
+    expect(getPlannerStatus().lastResult).toContain("1 model-proposed Planned Activity was deferred");
   });
 
   it("revises after a Correction and uses the corrected Task description in the prompt", async () => {
