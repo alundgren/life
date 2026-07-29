@@ -1,5 +1,7 @@
 import { getDb } from "@/lib/db/client";
 
+export const MAX_CORRECTIONS_PER_TASK = 5;
+
 export interface Correction {
   id: number;
   taskId: number;
@@ -28,10 +30,21 @@ export function applyCorrection(taskId: number, text: string): void {
   const db = getDb();
   const insertCorrection = db.prepare("INSERT INTO correction (task_id, text) VALUES (?, ?)");
   const updateDescription = db.prepare("UPDATE task SET description = ? WHERE id = ?");
+  const discardOlderCorrections = db.prepare(
+    `DELETE FROM correction
+     WHERE task_id = ?
+       AND id NOT IN (
+         SELECT id FROM correction
+         WHERE task_id = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?
+       )`
+  );
 
   db.transaction(() => {
     insertCorrection.run(taskId, text);
     updateDescription.run(text, taskId);
+    discardOlderCorrections.run(taskId, taskId, MAX_CORRECTIONS_PER_TASK);
   })();
 }
 

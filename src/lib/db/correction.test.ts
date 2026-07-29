@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDbClient, getDb, resetDb, setDb } from "./client";
 import { runMigrations } from "./migrate";
-import { applyCorrection, hasCorrectionsSince, listCorrections } from "./correction";
+import {
+  applyCorrection,
+  hasCorrectionsSince,
+  listCorrections,
+  MAX_CORRECTIONS_PER_TASK,
+} from "./correction";
 import { createFlexibleTask, getTaskById } from "./task";
 
 describe("correction data access", () => {
@@ -62,6 +67,36 @@ describe("correction data access", () => {
       "First correction",
       "Second correction",
       "Third correction",
+    ]);
+  });
+
+  it("keeps only the most recent five Corrections per Task", () => {
+    const first = createFlexibleTask({
+      description: "Original",
+      frequencyText: "weekly",
+      durationMinutes: 30,
+    });
+    const second = createFlexibleTask({
+      description: "Second task",
+      frequencyText: "weekly",
+      durationMinutes: 30,
+    });
+
+    for (let i = 1; i <= MAX_CORRECTIONS_PER_TASK + 2; i++) {
+      applyCorrection(first.id, `First ${i}`);
+    }
+    applyCorrection(second.id, "Second correction");
+
+    expect(listCorrections(first.id).map((correction) => correction.text)).toEqual([
+      "First 3",
+      "First 4",
+      "First 5",
+      "First 6",
+      "First 7",
+    ]);
+    expect(getTaskById(first.id)?.description).toBe("First 7");
+    expect(listCorrections(second.id).map((correction) => correction.text)).toEqual([
+      "Second correction",
     ]);
   });
 
