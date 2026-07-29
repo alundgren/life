@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDbClient, getDb, resetDb, setDb } from "@/lib/db/client";
 import { runMigrations } from "@/lib/db/migrate";
-import { recordCompletion } from "@/lib/db/completion";
-import { applyCorrection } from "@/lib/db/correction";
+import { getCompletionById, recordCompletion } from "@/lib/db/completion";
+import { applyCorrection, listCorrections } from "@/lib/db/correction";
 import { setMode } from "@/lib/db/mode";
 import {
   listPlannedActivitiesForPlan,
   updatePlannedActivityStatus,
 } from "@/lib/db/plannedActivity";
-import { createFlexibleTask, createScheduledTask } from "@/lib/db/task";
+import { createFlexibleTask, createScheduledTask, getTaskById } from "@/lib/db/task";
 import { setTimeBudget } from "@/lib/db/timeBudget";
 import { createWeeklyPlanWithActivities, getWeeklyPlanByWeek } from "@/lib/db/weeklyPlan";
 
@@ -648,9 +648,9 @@ describe("weekly plan generation", () => {
       [future.taskId, future.date, "done"],
       [cleaning.id, "2026-07-31", "pending"],
     ]);
-    expect(callOllamaMock.mock.calls[0][0]).toContain("Today is 2026-07-29");
-    expect(callOllamaMock.mock.calls[0][0]).toContain("Finished early");
-    expect(callOllamaMock.mock.calls[0][0]).toContain("2026-07-28 | pending");
+    expect(callOllamaMock.mock.calls[1][0]).toContain("Today is 2026-07-29");
+    expect(callOllamaMock.mock.calls[1][0]).toContain("Finished early");
+    expect(callOllamaMock.mock.calls[1][0]).toContain("2026-07-28 | pending");
     expect(getPlannerStatus().lastResult).toContain("Revised week 2026-07-27");
   });
 
@@ -735,5 +735,152 @@ describe("weekly plan generation", () => {
     expect(listPlannedActivitiesForPlan(plan.id)).toEqual([]);
     expect(getWeeklyPlanByWeek(WEEK_START)?.revisedAt).not.toBe("2026-07-01 00:00:00");
     expect(getPlannerStatus().lastStatus).toBe("ok");
+  });
+
+  it("turns a Completion note into one Correction and uses it in this run's plan", async () => {
+    const laundry = createLaundry();
+    const completion = recordCompletion({
+      taskId: laundry.id,
+      completedDate: "2026-07-29",
+      note: "The big rug takes closer to an hour",
+    });
+    callOllamaMock
+      .mockResolvedValueOnce('{"correction":"Vacuum the big rug for about an hour"}')
+      .mockResolvedValueOnce(
+        JSON.stringify({ activities: [{ taskId: laundry.id, date: "2026-07-30" }] })
+      );
+
+    await runPlannerOnce();
+
+    expect(getTaskById(laundry.id)?.description).toBe("Vacuum the big rug for about an hour");
+    expect(listCorrections(laundry.id).map((correction) => correction.text)).toEqual([
+      "Vacuum the big rug for about an hour",
+    ]);
+    expect(getCompletionById(completion.id)?.processedAt).toBeDefined();
+    expect(callOllamaMock).toHaveBeenCalledTimes(2);
+    expect(callOllamaMock.mock.calls[1][0]).toContain("Vacuum the big rug for about an hour");
+    expect(getPlannerStatus().lastResult).toBe(
+      "1 Correction applied. Planned week 2026-07-27: 0 Scheduled and 1 model-placed Planned Activities."
+    );
+  });
+
+  it("marks unusable responses and note-less Completions processed without applying a Correction", async () => {
+    const laundry = createLaundry();
+    const commentary = recordCompletion({
+      taskId: laundry.id,
+      completedDate: "2026-07-28",
+      note: "It was raining, still fine",
+    });
+    const noNote = recordCompletion({ taskId: laundry.id, completedDate: "2026-07-29" });
+    callOllamaMock
+      .mockResolvedValueOnce("Not valid JSON")
+      .mockResolvedValueOnce('{"activities":[]}');
+
+    await runPlannerOnce();
+
+    expect(getTaskById(laundry.id)?.description).toBe("Do the laundry");
+    expect(listCorrections(laundry.id)).toEqual([]);
+    expect(getCompletionById(commentary.id)?.processedAt).toBeDefined();
+    expect(getCompletionById(noNote.id)?.processedAt).toBeDefined();
+    expect(callOllamaMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("considers several notes for one Task together and applies at most one Correction", async () => {
+    const laundry = createLaundry();
+    const first = recordCompletion({
+      taskId: laundry.id,
+      completedDate: "2026-07-28",
+      note: "The small rug was replaced",
+    });
+    const second = recordCompletion({
+      taskId: laundry.id,
+      completedDate: "2026-07-29",
+      note: "The big rug now takes closer to an hour",
+    });
+    callOllamaMock
+      .mockResolvedValueOnce('{"correction":"Vacuum the big rug for about an hour"}')
+      .mockResolvedValueOnce('{"activities":[]}');
+
+    await runPlannerOnce();
+
+    expect(listCorrections(laundry.id)).toHaveLength(1);
+    expect(getCompletionById(first.id)?.processedAt).toBeDefined();
+    expect(getCompletionById(second.id)?.processedAt).toBeDefined();
+    expect(callOllamaMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("processes a note-less Completion without an extraction call", async () => {
+    const laundry = createLaundry();
+    const completion = recordCompletion({ taskId: laundry.id, completedDate: "2026-07-29" });
+    callOllamaMock.mockResolvedValue('{"activities":[]}');
+
+    await runPlannerOnce();
+
+    expect(getCompletionById(completion.id)?.processedAt).toBeDefined();
+    expect(callOllamaMock).toHaveBeenCalledTimes(1);
+    expect(getPlannerStatus().lastResult).toBe("Week 2026-07-27 has nothing due.");
+  });
+
+  it("retries only the Task whose extraction failed while still planning", async () => {
+    const failed = createLaundry();
+    const processed = createFlexibleTask({
+      description: "Clean the windows",
+      frequencyText: "monthly",
+      durationMinutes: 30,
+    });
+    const failedCompletion = recordCompletion({
+      taskId: failed.id,
+      completedDate: "2026-07-29",
+      note: "Needs a new filter",
+    });
+    const processedCompletion = recordCompletion({
+      taskId: processed.id,
+      completedDate: "2026-07-29",
+      note: "Still the same job",
+    });
+    callOllamaMock
+      .mockRejectedValueOnce(new Error("Ollama unavailable"))
+      .mockResolvedValueOnce('{"correction":null}')
+      .mockResolvedValueOnce('{"activities":[]}');
+
+    await runPlannerOnce();
+
+    expect(getCompletionById(failedCompletion.id)?.processedAt).toBeUndefined();
+    expect(getCompletionById(processedCompletion.id)?.processedAt).toBeDefined();
+    expect(getWeeklyPlanByWeek(WEEK_START)).toBeUndefined();
+    expect(getPlannerStatus().lastResult).toBe(
+      "0 Corrections applied. 1 Task was deferred after extraction failure. Week 2026-07-27 has nothing due."
+    );
+  });
+
+  it("revises an already-planned week when extraction applies a Correction", async () => {
+    const laundry = createLaundry();
+    const plan = createWeeklyPlanWithActivities(WEEK_START, [
+      { taskId: laundry.id, date: "2026-07-30" },
+    ]);
+    getDb()
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-28 00:00:00' WHERE id = ?")
+      .run(plan.id);
+    const completion = recordCompletion({
+      taskId: laundry.id,
+      completedDate: "2026-07-28",
+      note: "The big rug takes closer to an hour",
+    });
+    getDb()
+      .prepare("UPDATE completion SET created_at = '2026-07-27 00:00:00' WHERE id = ?")
+      .run(completion.id);
+    callOllamaMock
+      .mockResolvedValueOnce('{"correction":"Vacuum the big rug for about an hour"}')
+      .mockResolvedValueOnce(
+        JSON.stringify({ activities: [{ taskId: laundry.id, date: "2026-07-31" }] })
+      );
+
+    await runPlannerOnce();
+
+    expect(listPlannedActivitiesForPlan(plan.id).map((activity) => activity.date)).toEqual([
+      "2026-07-31",
+    ]);
+    expect(callOllamaMock.mock.calls[1][0]).toContain("Vacuum the big rug for about an hour");
+    expect(getPlannerStatus().lastResult).toContain("1 Correction applied. Revised week 2026-07-27");
   });
 });

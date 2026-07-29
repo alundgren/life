@@ -3,9 +3,11 @@ import {
   getLatestCompletionDatesByTask,
   hasCompletionsSince,
   listCompletionsForDateRange,
+  listUnprocessedCompletions,
+  markCompletionProcessed,
   type Completion,
 } from "@/lib/db/completion";
-import { hasCorrectionsSince } from "@/lib/db/correction";
+import { applyCorrection, hasCorrectionsSince } from "@/lib/db/correction";
 import { getMode, type ModeValue } from "@/lib/db/mode";
 import { listPlannedActivitiesForPlan, type PlannedActivity } from "@/lib/db/plannedActivity";
 import {
@@ -13,6 +15,7 @@ import {
   taskDurationMinutes,
   type FlexibleTask,
   type ScheduledTask,
+  type Task,
 } from "@/lib/db/task";
 import { getTimeBudget } from "@/lib/db/timeBudget";
 import {
@@ -376,6 +379,112 @@ function deferredResultSuffix(deferred: number): string {
   return ` ${deferred} model-proposed Planned ${deferred === 1 ? "Activity was" : "Activities were"} deferred for the Time Budget.`;
 }
 
+interface CorrectionExtractionResult {
+  applied: number;
+  failedTasks: number;
+  hadNotes: boolean;
+}
+
+function correctionPrompt(task: Task, completions: Completion[]): string {
+  const notes = completions
+    .filter((completion) => completion.note?.trim())
+    .map((completion) => `- completed ${completion.completedDate} | note: "${completion.note}"`)
+    .join("\n");
+
+  return [
+    "You keep a recurring Task's description accurate from Completion notes.",
+    "Decide whether the notes imply that what this Task involves has changed.",
+    "Return JSON only in exactly this shape: {\"correction\": \"complete replacement description\"}.",
+    "Use {\"correction\": null} when no change is needed.",
+    "A correction must be the complete new Task description, never a diff or addendum.",
+    "Describe only what the Task involves. Do not change its Frequency, Duration, weekday, times, or recurrence.",
+    "",
+    `Task id: ${task.id}`,
+    `Task kind: ${task.kind}`,
+    `Current description: "${task.description}"`,
+    "Unprocessed Completion notes:",
+    notes,
+  ].join("\n");
+}
+
+function parseCorrection(response: string, currentDescription: string): string | undefined {
+  const json = extractJsonObject(response);
+  if (json === undefined) {
+    return undefined;
+  }
+
+  try {
+    const correction = (JSON.parse(json) as { correction?: unknown }).correction;
+    if (typeof correction !== "string") {
+      return undefined;
+    }
+    const text = correction.trim();
+    return text && text !== currentDescription ? text : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Considers unprocessed Completion notes, applying at most one Correction per Task. */
+async function extractCorrections(tasks: Task[]): Promise<CorrectionExtractionResult> {
+  const completionsByTask = new Map<number, Completion[]>();
+  for (const completion of listUnprocessedCompletions()) {
+    const completions = completionsByTask.get(completion.taskId) ?? [];
+    completions.push(completion);
+    completionsByTask.set(completion.taskId, completions);
+  }
+
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const result: CorrectionExtractionResult = { applied: 0, failedTasks: 0, hadNotes: false };
+
+  for (const [taskId, completions] of completionsByTask) {
+    const task = tasksById.get(taskId);
+    const hasNotes = completions.some((completion) => completion.note?.trim());
+
+    if (!hasNotes) {
+      completions.forEach((completion) => markCompletionProcessed(completion.id));
+      continue;
+    }
+
+    result.hadNotes = true;
+    if (task === undefined) {
+      continue;
+    }
+
+    try {
+      const env = getEnv();
+      const response = await callOllama(correctionPrompt(task, completions), {
+        host: env.OLLAMA_HOST,
+        model: env.OLLAMA_MODEL,
+        format: "json",
+      });
+      const correction = parseCorrection(response, task.description);
+      if (correction !== undefined) {
+        applyCorrection(task.id, correction);
+        result.applied++;
+      }
+      completions.forEach((completion) => markCompletionProcessed(completion.id));
+    } catch {
+      result.failedTasks++;
+    }
+  }
+
+  return result;
+}
+
+function extractionResultPrefix(result: CorrectionExtractionResult): string {
+  if (!result.hadNotes) {
+    return "";
+  }
+  const corrections = `${result.applied} ${result.applied === 1 ? "Correction" : "Corrections"} applied.`;
+  if (result.failedTasks === 0) {
+    return `${corrections} `;
+  }
+  return `${corrections} ${result.failedTasks} ${
+    result.failedTasks === 1 ? "Task was" : "Tasks were"
+  } deferred after extraction failure. `;
+}
+
 /**
  * Generates this week's Weekly Plan when none exists. An existing plan is revised only after new
  * Completion or Correction feedback has arrived since the Planner last wrote it.
@@ -384,17 +493,21 @@ export async function runPlannerOnce(): Promise<void> {
   const recordRun = getDb().prepare(
     "INSERT INTO planner_run (ran_at, status, result) VALUES (?, ?, ?)"
   );
+  let extraction: CorrectionExtractionResult = { applied: 0, failedTasks: 0, hadNotes: false };
+  const recordResult = (status: "ok" | "error", result: string) =>
+    recordRun.run(new Date().toISOString(), status, `${extractionResultPrefix(extraction)}${result}`);
 
   try {
     const weekStart = currentWeekStart(new Date());
+    extraction = await extractCorrections(listTasks());
+    const tasks = listTasks();
     const existingPlan = getWeeklyPlanByWeek(weekStart);
     if (existingPlan && !hasCompletionsSince(existingPlan.revisedAt) && !hasCorrectionsSince(existingPlan.revisedAt)) {
-      recordRun.run(new Date().toISOString(), "ok", `Week ${weekStart} already planned.`);
+      recordResult("ok", `Week ${weekStart} already planned.`);
       return;
     }
 
     const dates = weekDates(weekStart);
-    const tasks = listTasks();
     const mode = getMode();
     const timeBudgetMinutes = getTimeBudget(mode);
     const scheduledTasks = tasks.filter(
@@ -407,7 +520,7 @@ export async function runPlannerOnce(): Promise<void> {
 
     if (!existingPlan && flexibleTasks.length === 0) {
       if (fixedPlacements.length === 0) {
-        recordRun.run(new Date().toISOString(), "ok", `Week ${weekStart} has nothing due.`);
+        recordResult("ok", `Week ${weekStart} has nothing due.`);
         return;
       }
 
@@ -415,8 +528,7 @@ export async function runPlannerOnce(): Promise<void> {
         weekStart,
         fixedPlacements.map(({ activity }) => activity)
       );
-      recordRun.run(
-        new Date().toISOString(),
+      recordResult(
         "ok",
         `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and 0 model-placed Planned Activities.`
       );
@@ -424,7 +536,7 @@ export async function runPlannerOnce(): Promise<void> {
     }
 
     if (existingPlan && flexibleTasks.length === 0) {
-      recordRun.run(new Date().toISOString(), "ok", `Week ${weekStart} already planned.`);
+      recordResult("ok", `Week ${weekStart} already planned.`);
       return;
     }
 
@@ -486,11 +598,7 @@ export async function runPlannerOnce(): Promise<void> {
     );
 
     if (parsedActivities === undefined) {
-      recordRun.run(
-        new Date().toISOString(),
-        "error",
-        `Ollama returned no usable response for week ${weekStart}.`
-      );
+      recordResult("error", `Ollama returned no usable response for week ${weekStart}.`);
       return;
     }
 
@@ -503,8 +611,7 @@ export async function runPlannerOnce(): Promise<void> {
 
     if (existingPlan) {
       replaceRevisablePlannedActivities(existingPlan.id, today, activities);
-      recordRun.run(
-        new Date().toISOString(),
+      recordResult(
         "ok",
         `Revised week ${weekStart} from ${today}: ${activities.length} Planned ${
           activities.length === 1 ? "Activity" : "Activities"
@@ -515,8 +622,7 @@ export async function runPlannerOnce(): Promise<void> {
 
     const plannedActivities = [...fixedPlacements.map(({ activity }) => activity), ...activities];
     if (plannedActivities.length === 0) {
-      recordRun.run(
-        new Date().toISOString(),
+      recordResult(
         "ok",
         `Week ${weekStart} has nothing due.${deferredResultSuffix(deferred)}`
       );
@@ -524,16 +630,11 @@ export async function runPlannerOnce(): Promise<void> {
     }
 
     createWeeklyPlanWithActivities(weekStart, plannedActivities);
-    recordRun.run(
-      new Date().toISOString(),
+    recordResult(
       "ok",
       `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and ${activities.length} model-placed Planned Activities.${deferredResultSuffix(deferred)}`
     );
   } catch (error) {
-    recordRun.run(
-      new Date().toISOString(),
-      "error",
-      error instanceof Error ? error.message : String(error)
-    );
+    recordResult("error", error instanceof Error ? error.message : String(error));
   }
 }
