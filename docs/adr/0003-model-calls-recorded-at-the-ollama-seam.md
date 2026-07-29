@@ -1,0 +1,7 @@
+# Model Calls are recorded inside the Ollama wrapper, through an injected recorder
+
+The log of Model Calls could have been written by the Planner around its own two call sites, leaving the Ollama wrapper the pure fetch function it was. Instead the wrapper itself records every call, through a recorder injected at boot rather than imported directly.
+
+We chose this because the log must capture calls that produced no response at all — Ollama unreachable, a non-2xx status — and the wrapper is the only code that sees those, since it throws and the Planner's correction-extraction loop swallows the throw without ever seeing the request. Recording at the call sites would duplicate error handling and would silently miss any future caller. Injecting the recorder rather than importing the data-access module keeps the wrapper free of a SQLite dependency and keeps its unit tests free of a database: unwired, it simply records nothing.
+
+The visible cost is that the wrapper no longer returns a bare response string. Because a Model Call's outcome — what the Planner actually managed to do with the response — is only knowable after the call returns, the wrapper returns the id of the row it wrote so the caller can attach that outcome afterwards. A future reader will find a database row id in the return type of what otherwise looks like a plain HTTP client; that is deliberate, not leakage to be tidied away.

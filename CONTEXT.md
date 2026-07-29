@@ -46,6 +46,10 @@ _Avoid_: Schedule, agenda
 The LLM-driven process that generates and revises Weekly Plans, places Tasks within Mode and Time Budget constraints, and turns Completion notes into Corrections.
 _Avoid_: Worker, agent, scheduler
 
+**Model Call**:
+A single request sent to the LLM and what came back — either its response or the error that prevented one. Kept only as a bounded, recent record for judging how well the Planner is working; nothing in the domain ever reads one back.
+_Avoid_: Prompt log, request/response pair, LLM exchange
+
 **Mode**:
 A single global toggle — Work or Vacation — for the whole (single-user) system. Determines the weekly Time Budget available to Flexible Tasks and which weekday hours are assumed busy. Scheduled Tasks' fixed slots are honored regardless of Mode.
 _Avoid_: Profile, setting
