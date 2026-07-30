@@ -31,6 +31,7 @@ describe("Simulated Clock API", () => {
     expect(await GET().json()).toMatchObject({
       enabled: true,
       today: "2030-01-02",
+      timeZone: "Europe/Stockholm",
     });
 
     expect(await POST(postRequest({ days: 1 })).then((response) => response.json())).toMatchObject({

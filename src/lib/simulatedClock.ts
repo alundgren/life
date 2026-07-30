@@ -4,6 +4,95 @@ interface SimulatedClockRow {
   now: string;
 }
 
+interface ZonedDateTimeParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+function applicationTimeZone(): string {
+  const timeZone = process.env.APP_TIME_ZONE;
+  if (!timeZone) {
+    throw new Error("APP_TIME_ZONE must be set before reading calendar dates.");
+  }
+  return timeZone;
+}
+
+function zonedDateTimeParts(date: Date, timeZone = applicationTimeZone()): ZonedDateTimeParts {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)])
+  ) as Record<keyof ZonedDateTimeParts, number>;
+
+  return values;
+}
+
+function timeZoneOffsetMs(date: Date, timeZone: string): number {
+  const parts = zonedDateTimeParts(date, timeZone);
+  return (
+    Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second, date.getUTCMilliseconds()) -
+    date.getTime()
+  );
+}
+
+function compareWallTime(left: ZonedDateTimeParts, right: ZonedDateTimeParts): number {
+  for (const key of ["year", "month", "day", "hour", "minute", "second"] as const) {
+    if (left[key] !== right[key]) return left[key] - right[key];
+  }
+  return 0;
+}
+
+function instantForZonedDateTime(parts: ZonedDateTimeParts, milliseconds: number): Date {
+  const timeZone = applicationTimeZone();
+  const wallTimeAsUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+    milliseconds
+  );
+  const candidates: Date[] = [];
+  let candidate = new Date(wallTimeAsUtc);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const next = new Date(wallTimeAsUtc - timeZoneOffsetMs(candidate, timeZone));
+    candidates.push(next);
+    if (next.getTime() === candidate.getTime()) {
+      return next;
+    }
+    candidate = next;
+  }
+
+  // During a spring-forward gap no instant has the requested wall time. Choose the first
+  // candidate after it, which moves the clock forward across the gap as a calendar does.
+  return candidates
+    .filter((value) => compareWallTime(zonedDateTimeParts(value, timeZone), parts) >= 0)
+    .sort((left, right) => left.getTime() - right.getTime())[0] ?? candidate;
+}
+
+/** Adds whole days to an ISO calendar date without consulting the host timezone. */
+export function addCalendarDays(date: string, days: number): string {
+  const next = new Date(`${date}T00:00:00.000Z`);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next.toISOString().slice(0, 10);
+}
+
 export function isSimulatedClockEnabled(): boolean {
   return process.env.SIMULATED_CLOCK === "true";
 }
@@ -34,16 +123,28 @@ export function advanceSimulatedClock(days: number): Date {
     throw new Error("The Simulated Clock is not enabled.");
   }
 
-  const next = getCurrentTime();
-  next.setDate(next.getDate() + days);
+  const current = getCurrentTime();
+  const parts = zonedDateTimeParts(current);
+  const [year, month, day] = addCalendarDays(
+    `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`,
+    days
+  )
+    .split("-")
+    .map(Number);
+  const next = instantForZonedDateTime({ ...parts, year, month, day }, current.getUTCMilliseconds());
   const now = next.toISOString();
   getDb().prepare("UPDATE simulated_clock SET now = @now WHERE id = 1").run({ now });
   return next;
 }
 
 export function formatLocalDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  const { year, month, day } = zonedDateTimeParts(date);
+  const formattedMonth = String(month).padStart(2, "0");
+  const formattedDay = String(day).padStart(2, "0");
+  return `${year}-${formattedMonth}-${formattedDay}`;
+}
+
+/** The deployment-wide timezone used for calendar dates and browser timestamp display. */
+export function getApplicationTimeZone(): string {
+  return applicationTimeZone();
 }

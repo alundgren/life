@@ -9,7 +9,7 @@ type Settings = {
   mode: "work" | "vacation";
   budgets: { work: number; vacation: number };
 };
-type Clock = { enabled: boolean; now: string; today: string };
+type Clock = { enabled: boolean; now: string; today: string; timeZone: string };
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -31,7 +31,12 @@ function stubFetch(
   options: { failPut?: string; deferPut?: boolean; clock?: Clock } = {}
 ) {
   let stored = initial;
-  let clock = options.clock ?? { enabled: false, now: "2026-07-25T12:00:00.000Z", today: "2026-07-25" };
+  let clock = options.clock ?? {
+    enabled: false,
+    now: "2026-07-25T12:00:00.000Z",
+    today: "2026-07-25",
+    timeZone: "Europe/Stockholm",
+  };
   const pending = options.deferPut ? deferredResponse() : null;
 
   const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
@@ -193,7 +198,12 @@ describe("Settings page", () => {
   it("shows Simulated Clock controls only when the server enables the clock", async () => {
     const user = userEvent.setup();
     const { fetchMock } = stubFetch(initialSettings, {
-      clock: { enabled: true, now: "2026-07-25T12:00:00.000Z", today: "2026-07-25" },
+      clock: {
+        enabled: true,
+        now: "2026-07-25T12:00:00.000Z",
+        today: "2026-07-25",
+        timeZone: "Europe/Stockholm",
+      },
     });
     render(<SettingsPage />);
 

@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { ModelCall, ModelCallPreview } from "@/lib/db/modelCall";
 
-function timestamp(value: string): string {
-  return new Date(value).toLocaleString();
+function timestamp(value: string, timeZone: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", timeZone }).format(
+    new Date(value)
+  );
 }
 
 function kindLabel(kind: ModelCallPreview["kind"]): string {
@@ -14,16 +16,23 @@ function kindLabel(kind: ModelCallPreview["kind"]): string {
 
 export default function ModelCallsPage() {
   const [calls, setCalls] = useState<ModelCallPreview[] | null>(null);
+  const [timeZone, setTimeZone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<number, ModelCall | "loading" | "discarded" | "error">>({});
 
   useEffect(() => {
-    fetch("/api/model-calls")
-      .then((res) => {
-        if (!res.ok) throw new Error("bad status");
-        return res.json();
+    Promise.all([fetch("/api/model-calls"), fetch("/api/simulated-clock")])
+      .then(async ([callsResponse, clockResponse]) => {
+        if (!callsResponse.ok || !clockResponse.ok) throw new Error("bad status");
+        return Promise.all([
+          callsResponse.json() as Promise<ModelCallPreview[]>,
+          clockResponse.json() as Promise<{ timeZone: string }>,
+        ]);
       })
-      .then((body: ModelCallPreview[]) => setCalls(body))
+      .then(([modelCalls, clock]) => {
+        setCalls(modelCalls);
+        setTimeZone(clock.timeZone);
+      })
       .catch(() => setError("Failed to load Model Calls."));
   }, []);
 
@@ -59,7 +68,7 @@ export default function ModelCallsPage() {
         <p role="alert" className="text-sm text-red-600">{error}</p>
       ) : calls === null ? (
         <p className="text-sm text-muted">Loading…</p>
-      ) : calls.length === 0 ? (
+      ) : calls.length === 0 || timeZone === null ? (
         <p className="text-sm text-muted">No Model Calls have been recorded yet.</p>
       ) : (
         <ul className="flex flex-col gap-3">
@@ -69,7 +78,7 @@ export default function ModelCallsPage() {
               <li key={call.id} className={`rounded-md border p-4 ${call.status === "error" ? "border-red-500/60" : "border-muted/30"}`}>
                 <button type="button" onClick={() => void showDetail(call.id)} className="w-full text-left">
                   <span className="block text-sm font-medium">
-                    {timestamp(call.calledAt)} · {kindLabel(call.kind)} · {call.status} · {call.durationMs} ms
+                    {timestamp(call.calledAt, timeZone)} · {kindLabel(call.kind)} · {call.status} · {call.durationMs} ms
                   </span>
                   <span className="mt-1 block text-sm text-muted">{call.model}{call.outcome ? ` · ${call.outcome}` : ""}</span>
                   <span className="mt-2 block truncate font-mono text-xs text-muted">{call.requestPreview}</span>

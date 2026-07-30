@@ -12,6 +12,7 @@ type Clock = {
   enabled: boolean;
   now: string;
   today: string;
+  timeZone: string;
 };
 
 type BudgetForm = Record<ModeValue, string>;

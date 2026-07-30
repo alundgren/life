@@ -284,6 +284,26 @@ describe("weekly plan generation", () => {
     expect(callOllamaMock).not.toHaveBeenCalled();
   });
 
+  it("anchors a just-after-midnight Scheduled Task to its application-timezone week", async () => {
+    vi.setSystemTime(new Date("2026-07-26T22:30:00.000Z"));
+    const training = createScheduledTask({
+      description: "Bouldering: board and strength",
+      weekday: 2,
+      startTime: "16:00",
+      endTime: "18:00",
+      recurrenceIntervalWeeks: 2,
+    });
+
+    vi.setSystemTime(new Date("2026-07-29T12:00:00.000Z"));
+    await runPlannerOnce();
+
+    expect(
+      listPlannedActivitiesForPlan(getWeeklyPlanByWeek("2026-07-27")!.id).map(
+        (activity) => activity.taskId
+      )
+    ).toEqual([training.id]);
+  });
+
   it("persists Scheduled placement when Ollama returns a well-formed empty response", async () => {
     const training = createTraining();
     createLaundry();
