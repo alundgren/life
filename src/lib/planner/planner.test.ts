@@ -660,8 +660,8 @@ describe("weekly plan generation", () => {
     const [past, , future] = listPlannedActivitiesForPlan(plan.id);
     updatePlannedActivityStatus(future.id, "done");
     getDb()
-      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = ?")
-      .run(plan.id);
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = @id")
+      .run({ id: plan.id });
     recordCompletion({
       taskId: laundry.id,
       completedDate: "2026-07-29",
@@ -715,8 +715,8 @@ describe("weekly plan generation", () => {
     const [frozen] = listPlannedActivitiesForPlan(plan.id);
     updatePlannedActivityStatus(frozen.id, "done");
     getDb()
-      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = ?")
-      .run(plan.id);
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = @id")
+      .run({ id: plan.id });
     recordCompletion({ taskId: completed.id, completedDate: "2026-07-29" });
     callOllamaMock.mockResolvedValue(
       JSON.stringify({
@@ -744,8 +744,8 @@ describe("weekly plan generation", () => {
       { taskId: laundry.id, date: "2026-07-30" },
     ]);
     getDb()
-      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = ?")
-      .run(plan.id);
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = @id")
+      .run({ id: plan.id });
     applyCorrection(laundry.id, "Wash bedding and towels");
     callOllamaMock.mockResolvedValue(
       JSON.stringify({ activities: [{ taskId: laundry.id, date: "2026-07-31" }] })
@@ -763,8 +763,8 @@ describe("weekly plan generation", () => {
       { taskId: laundry.id, date: "2026-07-30" },
     ]);
     getDb()
-      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = ?")
-      .run(plan.id);
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = @id")
+      .run({ id: plan.id });
     recordCompletion({ taskId: laundry.id, completedDate: "2026-07-29" });
     callOllamaMock.mockResolvedValue('{"activities": [{"taskId": 9999, "date": "2026-07-30"}]}');
 
@@ -897,16 +897,16 @@ describe("weekly plan generation", () => {
       { taskId: laundry.id, date: "2026-07-30" },
     ]);
     getDb()
-      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-28 00:00:00' WHERE id = ?")
-      .run(plan.id);
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-28 00:00:00' WHERE id = @id")
+      .run({ id: plan.id });
     const completion = recordCompletion({
       taskId: laundry.id,
       completedDate: "2026-07-28",
       note: "The big rug takes closer to an hour",
     });
     getDb()
-      .prepare("UPDATE completion SET created_at = '2026-07-27 00:00:00' WHERE id = ?")
-      .run(completion.id);
+      .prepare("UPDATE completion SET created_at = '2026-07-27 00:00:00' WHERE id = @id")
+      .run({ id: completion.id });
     callOllamaMock
       .mockResolvedValueOnce('{"correction":"Vacuum the big rug for about an hour"}')
       .mockResolvedValueOnce(
@@ -1014,8 +1014,8 @@ describe("weekly plan generation", () => {
       { taskId: laundry.id, date: "2026-07-30" },
     ]);
     getDb()
-      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = ?")
-      .run(plan.id);
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = @id")
+      .run({ id: plan.id });
     recordCompletion({ taskId: laundry.id, completedDate: "2026-07-29" });
     callOllamaMock.mockClear();
 

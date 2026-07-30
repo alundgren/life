@@ -58,18 +58,13 @@ export function addPlannedActivity(input: AddPlannedActivityInput): PlannedActiv
   const db = getDb();
   const insert = db.prepare(
     `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status)
-     VALUES (?, ?, ?, ?)`
+     VALUES (@weeklyPlanId, @taskId, @date, @status)`
   );
-  const touchPlan = db.prepare("UPDATE weekly_plan SET updated_at = datetime('now') WHERE id = ?");
+  const touchPlan = db.prepare("UPDATE weekly_plan SET updated_at = datetime('now') WHERE id = @weeklyPlanId");
 
   const id = db.transaction(() => {
-    const result = insert.run(
-      input.weeklyPlanId,
-      input.taskId,
-      input.date,
-      input.status ?? "pending"
-    );
-    touchPlan.run(input.weeklyPlanId);
+    const result = insert.run({ ...input, status: input.status ?? "pending" });
+    touchPlan.run({ weeklyPlanId: input.weeklyPlanId });
     return Number(result.lastInsertRowid);
   })();
 
@@ -79,30 +74,30 @@ export function addPlannedActivity(input: AddPlannedActivityInput): PlannedActiv
 /** Updates a Planned Activity's status and bumps its plan's updated_at (mid-week revision, ADR-0001). */
 export function updatePlannedActivityStatus(id: number, status: PlannedActivityStatus): void {
   const db = getDb();
-  const update = db.prepare("UPDATE planned_activity SET status = ? WHERE id = ?");
+  const update = db.prepare("UPDATE planned_activity SET status = @status WHERE id = @id");
   const touchPlan = db.prepare(
     `UPDATE weekly_plan SET updated_at = datetime('now')
-     WHERE id = (SELECT weekly_plan_id FROM planned_activity WHERE id = ?)`
+     WHERE id = (SELECT weekly_plan_id FROM planned_activity WHERE id = @id)`
   );
 
   db.transaction(() => {
-    update.run(status, id);
-    touchPlan.run(id);
+    update.run({ id, status });
+    touchPlan.run({ id });
   })();
 }
 
 export function getPlannedActivityById(id: number): PlannedActivity | undefined {
   const row = getDb()
-    .prepare(`${SELECT_PLANNED_ACTIVITY_SQL} WHERE pa.id = ?`)
-    .get(id) as PlannedActivityRow | undefined;
+    .prepare(`${SELECT_PLANNED_ACTIVITY_SQL} WHERE pa.id = @id`)
+    .get({ id }) as PlannedActivityRow | undefined;
   return row ? rowToPlannedActivity(row) : undefined;
 }
 
 /** A Weekly Plan's Planned Activities, in date order. */
 export function listPlannedActivitiesForPlan(planId: number): PlannedActivity[] {
   const rows = getDb()
-    .prepare(`${SELECT_PLANNED_ACTIVITY_SQL} WHERE pa.weekly_plan_id = ? ORDER BY pa.date, pa.id`)
-    .all(planId) as PlannedActivityRow[];
+    .prepare(`${SELECT_PLANNED_ACTIVITY_SQL} WHERE pa.weekly_plan_id = @planId ORDER BY pa.date, pa.id`)
+    .all({ planId }) as PlannedActivityRow[];
   return rows.map(rowToPlannedActivity);
 }
 
@@ -111,12 +106,12 @@ export function listPlannedActivitiesForDate(date: string): PlannedActivity[] {
   const rows = getDb()
     .prepare(
       `${SELECT_PLANNED_ACTIVITY_SQL}
-       WHERE pa.date = ?
+       WHERE pa.date = @date
        ORDER BY
          CASE WHEN ts.start_time IS NULL THEN 1 ELSE 0 END,
          ts.start_time,
          pa.id`
     )
-    .all(date) as PlannedActivityRow[];
+    .all({ date }) as PlannedActivityRow[];
   return rows.map(rowToPlannedActivity);
 }

@@ -26,14 +26,14 @@ export function runMigrations(db: Database.Database): void {
     .filter((file) => !applied.has(file));
 
   const recordMigration = db.prepare(
-    "INSERT INTO schema_migrations (filename) VALUES (?)"
+    "INSERT INTO schema_migrations (filename) VALUES (@filename)"
   );
 
   for (const file of pendingFiles) {
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), "utf8");
     const applyMigration = db.transaction(() => {
       db.exec(sql);
-      recordMigration.run(file);
+      recordMigration.run({ filename: file });
     });
     applyMigration();
   }

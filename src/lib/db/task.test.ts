@@ -77,17 +77,17 @@ describe("task data access", () => {
     });
 
     const scheduledChildCount = getDb()
-      .prepare("SELECT COUNT(*) as count FROM task_scheduled WHERE task_id = ?")
-      .get(scheduled.id) as { count: number };
+      .prepare("SELECT COUNT(*) as count FROM task_scheduled WHERE task_id = @taskId")
+      .get({ taskId: scheduled.id }) as { count: number };
     const flexibleChildCount = getDb()
-      .prepare("SELECT COUNT(*) as count FROM task_flexible WHERE task_id = ?")
-      .get(flexible.id) as { count: number };
+      .prepare("SELECT COUNT(*) as count FROM task_flexible WHERE task_id = @taskId")
+      .get({ taskId: flexible.id }) as { count: number };
     const scheduledHasFlexibleChild = getDb()
-      .prepare("SELECT COUNT(*) as count FROM task_flexible WHERE task_id = ?")
-      .get(scheduled.id) as { count: number };
+      .prepare("SELECT COUNT(*) as count FROM task_flexible WHERE task_id = @taskId")
+      .get({ taskId: scheduled.id }) as { count: number };
     const flexibleHasScheduledChild = getDb()
-      .prepare("SELECT COUNT(*) as count FROM task_scheduled WHERE task_id = ?")
-      .get(flexible.id) as { count: number };
+      .prepare("SELECT COUNT(*) as count FROM task_scheduled WHERE task_id = @taskId")
+      .get({ taskId: flexible.id }) as { count: number };
 
     expect(scheduledChildCount.count).toBe(1);
     expect(flexibleChildCount.count).toBe(1);
@@ -145,11 +145,11 @@ describe("task data access", () => {
       recurrenceIntervalWeeks: 1,
     });
 
-    getDb().prepare("DELETE FROM task WHERE id = ?").run(task.id);
+    getDb().prepare("DELETE FROM task WHERE id = @id").run({ id: task.id });
 
     const childCount = getDb()
-      .prepare("SELECT COUNT(*) as count FROM task_scheduled WHERE task_id = ?")
-      .get(task.id) as { count: number };
+      .prepare("SELECT COUNT(*) as count FROM task_scheduled WHERE task_id = @taskId")
+      .get({ taskId: task.id }) as { count: number };
     expect(childCount.count).toBe(0);
     expect(getTaskById(task.id)).toBeUndefined();
   });
@@ -266,11 +266,11 @@ describe("task data access", () => {
     });
 
     const parent = getDb()
-      .prepare("SELECT description FROM task WHERE id = ?")
-      .get(created.id) as { description: string };
+      .prepare("SELECT description FROM task WHERE id = @id")
+      .get({ id: created.id }) as { description: string };
     const child = getDb()
-      .prepare("SELECT weekday, recurrence_interval_weeks FROM task_scheduled WHERE task_id = ?")
-      .get(created.id) as { weekday: number; recurrence_interval_weeks: number };
+      .prepare("SELECT weekday, recurrence_interval_weeks FROM task_scheduled WHERE task_id = @taskId")
+      .get({ taskId: created.id }) as { weekday: number; recurrence_interval_weeks: number };
 
     expect(parent.description).toBe("Renamed");
     expect(child.weekday).toBe(5);
@@ -334,11 +334,11 @@ describe("task data access", () => {
     expect(getTaskById(flexible.id)).toEqual(flexible);
     // No stray child rows were written into the other kind's table.
     const scheduledStrayChild = getDb()
-      .prepare("SELECT COUNT(*) as count FROM task_flexible WHERE task_id = ?")
-      .get(scheduled.id) as { count: number };
+      .prepare("SELECT COUNT(*) as count FROM task_flexible WHERE task_id = @taskId")
+      .get({ taskId: scheduled.id }) as { count: number };
     const flexibleStrayChild = getDb()
-      .prepare("SELECT COUNT(*) as count FROM task_scheduled WHERE task_id = ?")
-      .get(flexible.id) as { count: number };
+      .prepare("SELECT COUNT(*) as count FROM task_scheduled WHERE task_id = @taskId")
+      .get({ taskId: flexible.id }) as { count: number };
     expect(scheduledStrayChild.count).toBe(0);
     expect(flexibleStrayChild.count).toBe(0);
   });

@@ -108,11 +108,11 @@ describe("correction data access", () => {
     });
     applyCorrection(task.id, "First correction");
 
-    getDb().prepare("DELETE FROM task WHERE id = ?").run(task.id);
+    getDb().prepare("DELETE FROM task WHERE id = @id").run({ id: task.id });
 
     const remaining = getDb()
-      .prepare("SELECT COUNT(*) as count FROM correction WHERE task_id = ?")
-      .get(task.id) as { count: number };
+      .prepare("SELECT COUNT(*) as count FROM correction WHERE task_id = @taskId")
+      .get({ taskId: task.id }) as { count: number };
     expect(remaining.count).toBe(0);
   });
 
@@ -128,8 +128,8 @@ describe("correction data access", () => {
     });
     applyCorrection(task.id, "Updated");
     getDb()
-      .prepare("UPDATE correction SET created_at = '2026-07-29 12:00:00' WHERE task_id = ?")
-      .run(task.id);
+      .prepare("UPDATE correction SET created_at = '2026-07-29 12:00:00' WHERE task_id = @taskId")
+      .run({ taskId: task.id });
 
     expect(hasCorrectionsSince("2026-07-29 12:00:00")).toBe(true);
     expect(hasCorrectionsSince("2026-07-29 12:00:01")).toBe(false);

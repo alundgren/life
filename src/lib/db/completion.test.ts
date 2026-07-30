@@ -74,11 +74,11 @@ describe("completion data access", () => {
       plannedActivityId: activity.id,
     });
 
-    getDb().prepare("DELETE FROM planned_activity WHERE id = ?").run(activity.id);
+    getDb().prepare("DELETE FROM planned_activity WHERE id = @id").run({ id: activity.id });
 
     const row = getDb()
-      .prepare("SELECT planned_activity_id FROM completion WHERE id = ?")
-      .get(completion.id) as { planned_activity_id: number | null };
+      .prepare("SELECT planned_activity_id FROM completion WHERE id = @id")
+      .get({ id: completion.id }) as { planned_activity_id: number | null };
     expect(row.planned_activity_id).toBeNull();
   });
 
@@ -108,8 +108,8 @@ describe("completion data access", () => {
     markCompletionProcessed(completion.id);
 
     const row = getDb()
-      .prepare("SELECT processed_at FROM completion WHERE id = ?")
-      .get(completion.id) as { processed_at: string | null };
+      .prepare("SELECT processed_at FROM completion WHERE id = @id")
+      .get({ id: completion.id }) as { processed_at: string | null };
     expect(row.processed_at).not.toBeNull();
   });
 
@@ -173,8 +173,8 @@ describe("completion data access", () => {
       note: "Finished early",
     });
     getDb()
-      .prepare("UPDATE completion SET created_at = ? WHERE id = ?")
-      .run("2026-07-29 12:00:00", completion.id);
+      .prepare("UPDATE completion SET created_at = @createdAt WHERE id = @id")
+      .run({ createdAt: "2026-07-29 12:00:00", id: completion.id });
 
     expect(hasCompletionsSince("2026-07-29 12:00:00")).toBe(true);
     expect(hasCompletionsSince("2026-07-29 12:00:01")).toBe(false);
@@ -191,11 +191,11 @@ describe("completion data access", () => {
     });
     recordCompletion({ taskId: task.id, completedDate: "2026-07-21" });
 
-    getDb().prepare("DELETE FROM task WHERE id = ?").run(task.id);
+    getDb().prepare("DELETE FROM task WHERE id = @id").run({ id: task.id });
 
     const remaining = getDb()
-      .prepare("SELECT COUNT(*) as count FROM completion WHERE task_id = ?")
-      .get(task.id) as { count: number };
+      .prepare("SELECT COUNT(*) as count FROM completion WHERE task_id = @taskId")
+      .get({ taskId: task.id }) as { count: number };
     expect(remaining.count).toBe(0);
   });
 });

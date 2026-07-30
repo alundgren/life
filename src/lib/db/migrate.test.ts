@@ -53,7 +53,7 @@ describe("runMigrations", () => {
         updated_at TEXT NOT NULL
       );
     `);
-    const recordApplied = db.prepare("INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)");
+    const recordApplied = db.prepare("INSERT INTO schema_migrations (filename, applied_at) VALUES (@filename, @appliedAt)");
     const priorMigrations = [
       "0001_create_placeholder_message.sql",
       "0002_create_planner_run.sql",
@@ -68,7 +68,7 @@ describe("runMigrations", () => {
       "0011_seed_time_budgets.sql",
     ];
     for (const migration of priorMigrations) {
-      recordApplied.run(migration, "2026-07-01 00:00:00");
+      recordApplied.run({ filename: migration, appliedAt: "2026-07-01 00:00:00" });
     }
     db.prepare(
       `INSERT INTO weekly_plan (week_start_date, created_at, updated_at)

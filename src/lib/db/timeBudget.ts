@@ -8,8 +8,8 @@ interface TimeBudgetRow {
 /** A Mode's weekly chore-time budget in minutes, or undefined if not yet configured. */
 export function getTimeBudget(mode: ModeValue): number | undefined {
   const row = getDb()
-    .prepare("SELECT weekly_minutes FROM time_budget WHERE mode = ?")
-    .get(mode) as TimeBudgetRow | undefined;
+    .prepare("SELECT weekly_minutes FROM time_budget WHERE mode = @mode")
+    .get({ mode }) as TimeBudgetRow | undefined;
   return row?.weekly_minutes;
 }
 
@@ -17,8 +17,8 @@ export function getTimeBudget(mode: ModeValue): number | undefined {
 export function setTimeBudget(mode: ModeValue, minutes: number): void {
   getDb()
     .prepare(
-      `INSERT INTO time_budget (mode, weekly_minutes) VALUES (?, ?)
+      `INSERT INTO time_budget (mode, weekly_minutes) VALUES (@mode, @minutes)
        ON CONFLICT (mode) DO UPDATE SET weekly_minutes = excluded.weekly_minutes`
     )
-    .run(mode, minutes);
+    .run({ mode, minutes });
 }
