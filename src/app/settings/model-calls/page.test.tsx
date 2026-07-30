@@ -30,6 +30,7 @@ describe("Model Calls page", () => {
   it("renders collapsed rows and fetches full text only after expansion", async () => {
     const fetchMock = vi.fn(async (input: string) => {
       if (input === "/api/model-calls") return jsonResponse([preview]);
+      if (input === "/api/simulated-clock") return jsonResponse({ timeZone: "Europe/Stockholm" });
       if (input === "/api/model-calls/1") {
         return jsonResponse({ ...preview, requestText: "full prompt", responseText: "full response" });
       }
@@ -42,13 +43,13 @@ describe("Model Calls page", () => {
 
     expect(await screen.findByText("short prompt")).toBeInTheDocument();
     expect(screen.queryByText("full prompt")).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     await user.click(screen.getByRole("button", { name: /plan generation/i }));
 
     expect(await screen.findByText("full prompt")).toBeInTheDocument();
     expect(screen.getByText("full response")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("explains when an expanded Model Call has been discarded", async () => {
@@ -57,6 +58,7 @@ describe("Model Calls page", () => {
       vi
         .fn()
         .mockResolvedValueOnce(jsonResponse([{ ...preview, status: "error", errorPreview: "connection refused" }]))
+        .mockResolvedValueOnce(jsonResponse({ timeZone: "Europe/Stockholm" }))
         .mockResolvedValueOnce(jsonResponse({ error: "Model Call not found." }, 404))
     );
     const user = userEvent.setup();
@@ -68,7 +70,12 @@ describe("Model Calls page", () => {
   });
 
   it("renders an empty state", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([])));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string) =>
+        Promise.resolve(input === "/api/model-calls" ? jsonResponse([]) : jsonResponse({ timeZone: "Europe/Stockholm" }))
+      )
+    );
 
     render(<ModelCallsPage />);
 

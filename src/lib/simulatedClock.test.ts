@@ -7,7 +7,7 @@ import { addPlannedActivity } from "@/lib/db/plannedActivity";
 import { createFlexibleTask } from "@/lib/db/task";
 import { createWeeklyPlan } from "@/lib/db/weeklyPlan";
 import { getPlannerStatus, startPlanner, stopPlanner } from "@/lib/planner/planner";
-import { advanceSimulatedClock, getCurrentTime } from "./simulatedClock";
+import { advanceSimulatedClock, formatLocalDate, getCurrentTime } from "./simulatedClock";
 
 describe("Simulated Clock", () => {
   beforeEach(() => {
@@ -33,6 +33,30 @@ describe("Simulated Clock", () => {
 
     expect(advanceSimulatedClock(7).toISOString()).toBe("2030-01-09T12:00:00.000Z");
     expect(getCurrentTime().toISOString()).toBe("2030-01-09T12:00:00.000Z");
+  });
+
+  it("derives calendar dates in the application timezone at a midnight boundary", () => {
+    expect(formatLocalDate(new Date("2030-01-02T23:30:00.000Z"))).toBe("2030-01-03");
+  });
+
+  it("preserves wall-clock time when advancing across daylight saving changes", () => {
+    getCurrentTime();
+    getDb()
+      .prepare("UPDATE simulated_clock SET now = @now WHERE id = 1")
+      .run({ now: "2026-10-24T22:30:00.000Z" });
+
+    expect(advanceSimulatedClock(1).toISOString()).toBe("2026-10-25T23:30:00.000Z");
+    expect(formatLocalDate(getCurrentTime())).toBe("2026-10-26");
+  });
+
+  it("moves a nonexistent spring-forward wall time past the DST gap", () => {
+    getCurrentTime();
+    getDb()
+      .prepare("UPDATE simulated_clock SET now = @now WHERE id = 1")
+      .run({ now: "2026-03-28T01:30:00.000Z" });
+
+    expect(advanceSimulatedClock(1).toISOString()).toBe("2026-03-29T01:30:00.000Z");
+    expect(formatLocalDate(getCurrentTime())).toBe("2026-03-29");
   });
 
   it("stamps domain rows with the simulated timestamp", () => {

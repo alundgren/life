@@ -11,7 +11,7 @@ type PlannerStatus = {
   lastResult: string | null;
 };
 type PlaceholderResponse = { message: string | null; planner: PlannerStatus };
-type ClockResponse = { today: string };
+type ClockResponse = { today: string; timeZone: string };
 type PlannedActivityForDay = {
   id: number;
   weeklyPlanId: number;

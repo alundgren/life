@@ -32,7 +32,12 @@ import {
 } from "@/lib/db/weeklyPlan";
 import { getEnv } from "@/lib/env";
 import { callOllama } from "@/lib/ollama/client";
-import { formatLocalDate, getCurrentTime, isSimulatedClockEnabled } from "@/lib/simulatedClock";
+import {
+  addCalendarDays,
+  formatLocalDate,
+  getCurrentTime,
+  isSimulatedClockEnabled,
+} from "@/lib/simulatedClock";
 
 const RUN_INTERVAL_MS = 15 * 60 * 1000;
 const WEEKDAY_NAMES = [
@@ -89,25 +94,26 @@ export function getPlannerStatus(): PlannerStatus {
   };
 }
 
-/** The Monday of the week the given moment falls in, in server-local time. */
+function weekStartForCalendarDate(date: string): string {
+  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+  return addCalendarDays(date, -((weekday + 6) % 7));
+}
+
+/** The Monday of the week the given moment falls in, in the application timezone. */
 function currentWeekStart(now: Date): string {
-  const daysSinceMonday = (now.getDay() + 6) % 7;
-  return formatLocalDate(
-    new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday)
-  );
+  return weekStartForCalendarDate(formatLocalDate(now));
 }
 
 /** The seven dates of the week starting on the given Monday. */
 function weekDates(weekStart: string): string[] {
-  const [year, month, day] = weekStart.split("-").map(Number);
-  return Array.from({ length: 7 }, (_, offset) =>
-    formatLocalDate(new Date(year, month - 1, day + offset))
-  );
+  return Array.from({ length: 7 }, (_, offset) => addCalendarDays(weekStart, offset));
 }
 
 function weekStartForDate(date: string): string {
-  const [year, month, day] = date.slice(0, 10).split("-").map(Number);
-  return currentWeekStart(new Date(year, month - 1, day));
+  // Older SQLite rows use a UTC `YYYY-MM-DD HH:MM:SS` value; interpret that legacy
+  // format explicitly rather than letting Date parse it in the host timezone.
+  const instant = new Date(date.includes("T") ? date : `${date.replace(" ", "T")}Z`);
+  return weekStartForCalendarDate(formatLocalDate(instant));
 }
 
 function scheduledTaskRecursInWeek(task: ScheduledTask, weekStart: string): boolean {

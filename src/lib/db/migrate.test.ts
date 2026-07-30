@@ -39,6 +39,28 @@ describe("runMigrations", () => {
     expect(after.count).toBe(before.count);
   });
 
+  it("removes SQLite's ambient timestamp defaults from domain tables", () => {
+    const db = createDbClient(":memory:");
+    runMigrations(db);
+
+    for (const [table, column] of [
+      ["task", "created_at"],
+      ["correction", "created_at"],
+      ["mode", "updated_at"],
+      ["weekly_plan", "created_at"],
+      ["weekly_plan", "updated_at"],
+      ["planned_activity", "created_at"],
+      ["completion", "created_at"],
+      ["completion_digest", "updated_at"],
+    ]) {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+        name: string;
+        dflt_value: string | null;
+      }>;
+      expect(columns.find((entry) => entry.name === column)?.dflt_value).toBeNull();
+    }
+  });
+
   it("backfills a Weekly Plan's Planner watermark from its creation timestamp", () => {
     const db = createDbClient(":memory:");
     db.exec(`
@@ -66,6 +88,9 @@ describe("runMigrations", () => {
       "0009_create_completion.sql",
       "0010_create_completion_digest.sql",
       "0011_seed_time_budgets.sql",
+      "0013_create_model_call.sql",
+      "0014_create_simulated_clock.sql",
+      "0015_remove_ambient_timestamp_defaults.sql",
     ];
     for (const migration of priorMigrations) {
       recordApplied.run({ filename: migration, appliedAt: "2026-07-01 00:00:00" });

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   advanceSimulatedClock,
   formatLocalDate,
+  getApplicationTimeZone,
   getCurrentTime,
   isSimulatedClockEnabled,
 } from "@/lib/simulatedClock";
@@ -12,6 +13,7 @@ function snapshot() {
     enabled: isSimulatedClockEnabled(),
     now: now.toISOString(),
     today: formatLocalDate(now),
+    timeZone: getApplicationTimeZone(),
   };
 }
 
@@ -43,5 +45,6 @@ export async function POST(request: Request) {
     enabled: true,
     now: now.toISOString(),
     today: formatLocalDate(now),
+    timeZone: getApplicationTimeZone(),
   });
 }

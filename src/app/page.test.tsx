@@ -96,7 +96,12 @@ function stubFetch({
       return jsonResponse(storedActivities);
     }
     if (method === "GET" && url === "/api/simulated-clock") {
-      return jsonResponse({ enabled: false, now: "2026-07-25T12:00:00.000Z", today: "2026-07-25" });
+      return jsonResponse({
+        enabled: false,
+        now: "2026-07-25T12:00:00.000Z",
+        today: "2026-07-25",
+        timeZone: "Europe/Stockholm",
+      });
     }
     if (method === "GET" && url === "/api/tasks") {
       return jsonResponse(tasks);
