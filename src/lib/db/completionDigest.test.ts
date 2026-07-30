@@ -57,8 +57,8 @@ describe("completion digest data access", () => {
     expect(getCompletionDigest(task.id)?.summary).toBe("Second summary");
 
     const count = getDb()
-      .prepare("SELECT COUNT(*) as count FROM completion_digest WHERE task_id = ?")
-      .get(task.id) as { count: number };
+      .prepare("SELECT COUNT(*) as count FROM completion_digest WHERE task_id = @taskId")
+      .get({ taskId: task.id }) as { count: number };
     expect(count.count).toBe(1);
   });
 
@@ -101,7 +101,7 @@ describe("completion digest data access", () => {
       replaceCompletionDigestAndDeleteCompletions(task.id, "Replacement summary", [completion.id])
     ).toThrow("delete failed");
     expect(getCompletionDigest(task.id)?.summary).toBe("Previous summary");
-    expect(getDb().prepare("SELECT id FROM completion WHERE id = ?").get(completion.id)).toEqual({
+    expect(getDb().prepare("SELECT id FROM completion WHERE id = @id").get({ id: completion.id })).toEqual({
       id: completion.id,
     });
   });
@@ -114,7 +114,7 @@ describe("completion digest data access", () => {
     });
     upsertCompletionDigest(task.id, "Summary");
 
-    getDb().prepare("DELETE FROM task WHERE id = ?").run(task.id);
+    getDb().prepare("DELETE FROM task WHERE id = @id").run({ id: task.id });
 
     expect(getCompletionDigest(task.id)).toBeUndefined();
   });

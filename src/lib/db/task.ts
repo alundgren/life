@@ -92,22 +92,16 @@ function rowToTask(row: TaskRow): Task {
 /** Inserts the parent `task` row and its `task_scheduled` child row in one transaction. */
 export function createScheduledTask(input: CreateScheduledTaskInput): ScheduledTask {
   const db = getDb();
-  const insertTask = db.prepare("INSERT INTO task (kind, description) VALUES ('scheduled', ?)");
+  const insertTask = db.prepare("INSERT INTO task (kind, description) VALUES ('scheduled', @description)");
   const insertScheduled = db.prepare(
     `INSERT INTO task_scheduled (task_id, weekday, start_time, end_time, recurrence_interval_weeks)
-     VALUES (?, ?, ?, ?, ?)`
+     VALUES (@taskId, @weekday, @startTime, @endTime, @recurrenceIntervalWeeks)`
   );
 
   const taskId = db.transaction(() => {
-    const result = insertTask.run(input.description);
+    const result = insertTask.run({ description: input.description });
     const id = Number(result.lastInsertRowid);
-    insertScheduled.run(
-      id,
-      input.weekday,
-      input.startTime,
-      input.endTime,
-      input.recurrenceIntervalWeeks
-    );
+    insertScheduled.run({ taskId: id, ...input });
     return id;
   })();
 
@@ -117,15 +111,15 @@ export function createScheduledTask(input: CreateScheduledTaskInput): ScheduledT
 /** Inserts the parent `task` row and its `task_flexible` child row in one transaction. */
 export function createFlexibleTask(input: CreateFlexibleTaskInput): FlexibleTask {
   const db = getDb();
-  const insertTask = db.prepare("INSERT INTO task (kind, description) VALUES ('flexible', ?)");
+  const insertTask = db.prepare("INSERT INTO task (kind, description) VALUES ('flexible', @description)");
   const insertFlexible = db.prepare(
-    "INSERT INTO task_flexible (task_id, frequency_text, duration_minutes) VALUES (?, ?, ?)"
+    "INSERT INTO task_flexible (task_id, frequency_text, duration_minutes) VALUES (@taskId, @frequencyText, @durationMinutes)"
   );
 
   const taskId = db.transaction(() => {
-    const result = insertTask.run(input.description);
+    const result = insertTask.run({ description: input.description });
     const id = Number(result.lastInsertRowid);
-    insertFlexible.run(id, input.frequencyText, input.durationMinutes);
+    insertFlexible.run({ taskId: id, ...input });
     return id;
   })();
 
@@ -144,25 +138,19 @@ export function updateScheduledTask(
 ): ScheduledTask | undefined {
   const db = getDb();
   const updateTask = db.prepare(
-    "UPDATE task SET description = ? WHERE id = ? AND kind = 'scheduled'"
+    "UPDATE task SET description = @description WHERE id = @id AND kind = 'scheduled'"
   );
   const updateScheduled = db.prepare(
     `UPDATE task_scheduled
-     SET weekday = ?, start_time = ?, end_time = ?, recurrence_interval_weeks = ?
-     WHERE task_id = ?`
+     SET weekday = @weekday, start_time = @startTime, end_time = @endTime, recurrence_interval_weeks = @recurrenceIntervalWeeks
+     WHERE task_id = @id`
   );
 
   const ok = db.transaction(() => {
-    if (updateTask.run(input.description, id).changes !== 1) {
+    if (updateTask.run({ id, ...input }).changes !== 1) {
       return false;
     }
-    updateScheduled.run(
-      input.weekday,
-      input.startTime,
-      input.endTime,
-      input.recurrenceIntervalWeeks,
-      id
-    );
+    updateScheduled.run({ id, ...input });
     return true;
   })();
 
@@ -181,17 +169,17 @@ export function updateFlexibleTask(
 ): FlexibleTask | undefined {
   const db = getDb();
   const updateTask = db.prepare(
-    "UPDATE task SET description = ? WHERE id = ? AND kind = 'flexible'"
+    "UPDATE task SET description = @description WHERE id = @id AND kind = 'flexible'"
   );
   const updateFlexible = db.prepare(
-    "UPDATE task_flexible SET frequency_text = ?, duration_minutes = ? WHERE task_id = ?"
+    "UPDATE task_flexible SET frequency_text = @frequencyText, duration_minutes = @durationMinutes WHERE task_id = @id"
   );
 
   const ok = db.transaction(() => {
-    if (updateTask.run(input.description, id).changes !== 1) {
+    if (updateTask.run({ id, ...input }).changes !== 1) {
       return false;
     }
-    updateFlexible.run(input.frequencyText, input.durationMinutes, id);
+    updateFlexible.run({ id, ...input });
     return true;
   })();
 
@@ -200,8 +188,8 @@ export function updateFlexibleTask(
 
 export function getTaskById(id: number): Task | undefined {
   const row = getDb()
-    .prepare(`${SELECT_TASK_SQL} WHERE t.id = ?`)
-    .get(id) as TaskRow | undefined;
+    .prepare(`${SELECT_TASK_SQL} WHERE t.id = @id`)
+    .get({ id }) as TaskRow | undefined;
   return row ? rowToTask(row) : undefined;
 }
 

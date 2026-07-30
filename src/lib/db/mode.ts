@@ -15,6 +15,6 @@ export function getMode(): ModeValue {
 /** Switches the system's Mode. */
 export function setMode(value: ModeValue): void {
   getDb()
-    .prepare("UPDATE mode SET value = ?, updated_at = datetime('now') WHERE id = 1")
-    .run(value);
+    .prepare("UPDATE mode SET value = @value, updated_at = datetime('now') WHERE id = 1")
+    .run({ value });
 }

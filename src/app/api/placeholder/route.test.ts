@@ -37,8 +37,8 @@ describe("GET /api/placeholder", () => {
 
   it("returns the most recent Planner heartbeat", async () => {
     getDb()
-      .prepare("INSERT INTO planner_run (ran_at, status, result) VALUES (?, ?, ?)")
-      .run("2026-07-23T00:00:00.000Z", "ok", "pong");
+      .prepare("INSERT INTO planner_run (ran_at, status, result) VALUES (@ranAt, @status, @result)")
+      .run({ ranAt: "2026-07-23T00:00:00.000Z", status: "ok", result: "pong" });
 
     const response = GET();
     const body = (await response.json()) as {

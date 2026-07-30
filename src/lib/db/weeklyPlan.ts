@@ -30,8 +30,8 @@ function rowToWeeklyPlan(row: WeeklyPlanRow): WeeklyPlan {
 /** Creates a Weekly Plan for a given week. week_start_date is unique — one plan per week. */
 export function createWeeklyPlan(weekStartDate: string): WeeklyPlan {
   getDb()
-    .prepare("INSERT INTO weekly_plan (week_start_date, revised_at) VALUES (?, datetime('now'))")
-    .run(weekStartDate);
+    .prepare("INSERT INTO weekly_plan (week_start_date, revised_at) VALUES (@weekStartDate, datetime('now'))")
+    .run({ weekStartDate });
   return getWeeklyPlanByWeek(weekStartDate)!;
 }
 
@@ -50,17 +50,17 @@ export function createWeeklyPlanWithActivities(
 ): WeeklyPlan {
   const db = getDb();
   const insertPlan = db.prepare(
-    "INSERT INTO weekly_plan (week_start_date, revised_at) VALUES (?, datetime('now'))"
+    "INSERT INTO weekly_plan (week_start_date, revised_at) VALUES (@weekStartDate, datetime('now'))"
   );
   const insertActivity = db.prepare(
     `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status)
-     VALUES (?, ?, ?, 'pending')`
+     VALUES (@weeklyPlanId, @taskId, @date, 'pending')`
   );
 
   db.transaction(() => {
-    const planId = Number(insertPlan.run(weekStartDate).lastInsertRowid);
+    const planId = Number(insertPlan.run({ weekStartDate }).lastInsertRowid);
     for (const activity of activities) {
-      insertActivity.run(planId, activity.taskId, activity.date);
+      insertActivity.run({ weeklyPlanId: planId, ...activity });
     }
   })();
 
@@ -80,25 +80,25 @@ export function replaceRevisablePlannedActivities(
   const db = getDb();
   const deleteActivities = db.prepare(
     `DELETE FROM planned_activity
-     WHERE weekly_plan_id = ? AND status = 'pending' AND date >= ?
+     WHERE weekly_plan_id = @weeklyPlanId AND status = 'pending' AND date >= @fromDate
        AND task_id IN (SELECT task_id FROM task_flexible)`
   );
   const insertActivity = db.prepare(
     `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status)
-     VALUES (?, ?, ?, 'pending')`
+     VALUES (@weeklyPlanId, @taskId, @date, 'pending')`
   );
   const stampPlan = db.prepare(
     `UPDATE weekly_plan
      SET revised_at = datetime('now'), updated_at = datetime('now')
-     WHERE id = ?`
+     WHERE id = @weeklyPlanId`
   );
 
   db.transaction(() => {
-    deleteActivities.run(weeklyPlanId, fromDate);
+    deleteActivities.run({ weeklyPlanId, fromDate });
     for (const activity of activities) {
-      insertActivity.run(weeklyPlanId, activity.taskId, activity.date);
+      insertActivity.run({ weeklyPlanId, ...activity });
     }
-    stampPlan.run(weeklyPlanId);
+    stampPlan.run({ weeklyPlanId });
   })();
 }
 
@@ -106,8 +106,8 @@ export function getWeeklyPlanByWeek(weekStartDate: string): WeeklyPlan | undefin
   const row = getDb()
     .prepare(
       `SELECT id, week_start_date, created_at, updated_at, revised_at
-       FROM weekly_plan WHERE week_start_date = ?`
+       FROM weekly_plan WHERE week_start_date = @weekStartDate`
     )
-    .get(weekStartDate) as WeeklyPlanRow | undefined;
+    .get({ weekStartDate }) as WeeklyPlanRow | undefined;
   return row ? rowToWeeklyPlan(row) : undefined;
 }

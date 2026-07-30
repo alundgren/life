@@ -51,7 +51,7 @@ const SELECT_COMPACTION_ELIGIBLE_SQL = `
   )
   SELECT id, task_id, planned_activity_id, completed_date, note, processed_at, created_at
   FROM ranked_completions
-  WHERE completion_rank > ? AND processed_at IS NOT NULL
+  WHERE completion_rank > @recentCompletionWindowSize AND processed_at IS NOT NULL
   ORDER BY task_id ASC, completed_date ASC, id ASC
 `;
 
@@ -72,33 +72,32 @@ export function recordCompletion(input: RecordCompletionInput): Completion {
   const db = getDb();
   const insert = db.prepare(
     `INSERT INTO completion (task_id, planned_activity_id, completed_date, note)
-     VALUES (?, ?, ?, ?)`
+     VALUES (@taskId, @plannedActivityId, @completedDate, @note)`
   );
-  const readActivity = db.prepare("SELECT status FROM planned_activity WHERE id = ?");
-  const markDone = db.prepare("UPDATE planned_activity SET status = 'done' WHERE id = ?");
+  const readActivity = db.prepare("SELECT status FROM planned_activity WHERE id = @plannedActivityId");
+  const markDone = db.prepare("UPDATE planned_activity SET status = 'done' WHERE id = @plannedActivityId");
   const touchPlan = db.prepare(
     `UPDATE weekly_plan SET updated_at = datetime('now')
-     WHERE id = (SELECT weekly_plan_id FROM planned_activity WHERE id = ?)`
+     WHERE id = (SELECT weekly_plan_id FROM planned_activity WHERE id = @plannedActivityId)`
   );
 
   const id = db.transaction(() => {
     if (input.plannedActivityId !== undefined) {
-      const activity = readActivity.get(input.plannedActivityId) as { status: string } | undefined;
+      const activity = readActivity.get({ plannedActivityId: input.plannedActivityId }) as { status: string } | undefined;
       if (activity?.status === "done") {
         throw new PlannedActivityAlreadyDoneError();
       }
     }
 
-    const result = insert.run(
-      input.taskId,
-      input.plannedActivityId ?? null,
-      input.completedDate,
-      input.note ?? null
-    );
+    const result = insert.run({
+      ...input,
+      plannedActivityId: input.plannedActivityId ?? null,
+      note: input.note ?? null,
+    });
 
     if (input.plannedActivityId !== undefined) {
-      markDone.run(input.plannedActivityId);
-      touchPlan.run(input.plannedActivityId);
+      markDone.run({ plannedActivityId: input.plannedActivityId });
+      touchPlan.run({ plannedActivityId: input.plannedActivityId });
     }
 
     return Number(result.lastInsertRowid);
@@ -109,8 +108,8 @@ export function recordCompletion(input: RecordCompletionInput): Completion {
 
 export function getCompletionById(id: number): Completion | undefined {
   const row = getDb()
-    .prepare(`${SELECT_COMPLETION_SQL} WHERE id = ?`)
-    .get(id) as CompletionRow | undefined;
+    .prepare(`${SELECT_COMPLETION_SQL} WHERE id = @id`)
+    .get({ id }) as CompletionRow | undefined;
   return row ? rowToCompletion(row) : undefined;
 }
 
@@ -127,8 +126,8 @@ export function getLatestCompletionDatesByTask(): Map<number, string> {
 /** Whether any Completion was recorded at or after a Planner watermark. */
 export function hasCompletionsSince(timestamp: string): boolean {
   const row = getDb()
-    .prepare("SELECT EXISTS(SELECT 1 FROM completion WHERE created_at >= ?) AS exists_since")
-    .get(timestamp) as { exists_since: number };
+    .prepare("SELECT EXISTS(SELECT 1 FROM completion WHERE created_at >= @timestamp) AS exists_since")
+    .get({ timestamp }) as { exists_since: number };
   return row.exists_since === 1;
 }
 
@@ -137,10 +136,10 @@ export function listCompletionsForDateRange(startDate: string, endDate: string):
   const rows = getDb()
     .prepare(
       `${SELECT_COMPLETION_SQL}
-       WHERE completed_date >= ? AND completed_date <= ?
+       WHERE completed_date >= @startDate AND completed_date <= @endDate
        ORDER BY completed_date ASC, id ASC`
     )
-    .all(startDate, endDate) as CompletionRow[];
+    .all({ startDate, endDate }) as CompletionRow[];
   return rows.map(rowToCompletion);
 }
 
@@ -159,7 +158,7 @@ export function listUnprocessedCompletions(): Completion[] {
 export function listCompactionEligibleCompletionsByTask(): Map<number, Completion[]> {
   const rows = getDb()
     .prepare(SELECT_COMPACTION_ELIGIBLE_SQL)
-    .all(RECENT_COMPLETION_WINDOW_SIZE) as CompletionRow[];
+    .all({ recentCompletionWindowSize: RECENT_COMPLETION_WINDOW_SIZE }) as CompletionRow[];
 
   const completionsByTask = new Map<number, Completion[]>();
   for (const row of rows) {
@@ -173,5 +172,5 @@ export function listCompactionEligibleCompletionsByTask(): Map<number, Completio
 
 /** Marks a Completion as considered for Correction extraction. */
 export function markCompletionProcessed(id: number): void {
-  getDb().prepare("UPDATE completion SET processed_at = datetime('now') WHERE id = ?").run(id);
+  getDb().prepare("UPDATE completion SET processed_at = datetime('now') WHERE id = @id").run({ id });
 }

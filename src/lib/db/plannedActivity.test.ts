@@ -101,8 +101,8 @@ describe("planned activity data access", () => {
     });
 
     getDb()
-      .prepare("UPDATE weekly_plan SET updated_at = '2000-01-01T00:00:00Z' WHERE id = ?")
-      .run(plan.id);
+      .prepare("UPDATE weekly_plan SET updated_at = '2000-01-01T00:00:00Z' WHERE id = @id")
+      .run({ id: plan.id });
 
     addPlannedActivity({ weeklyPlanId: plan.id, taskId: task.id, date: "2026-07-21" });
 
@@ -119,8 +119,8 @@ describe("planned activity data access", () => {
     const activity = addPlannedActivity({ weeklyPlanId: plan.id, taskId: task.id, date: "2026-07-21" });
 
     getDb()
-      .prepare("UPDATE weekly_plan SET updated_at = '2000-01-01T00:00:00Z' WHERE id = ?")
-      .run(plan.id);
+      .prepare("UPDATE weekly_plan SET updated_at = '2000-01-01T00:00:00Z' WHERE id = @id")
+      .run({ id: plan.id });
 
     updatePlannedActivityStatus(activity.id, "done");
 
@@ -136,7 +136,7 @@ describe("planned activity data access", () => {
     });
     addPlannedActivity({ weeklyPlanId: plan.id, taskId: task.id, date: "2026-07-21" });
 
-    getDb().prepare("DELETE FROM weekly_plan WHERE id = ?").run(plan.id);
+    getDb().prepare("DELETE FROM weekly_plan WHERE id = @id").run({ id: plan.id });
 
     expect(listPlannedActivitiesForPlan(plan.id)).toHaveLength(0);
   });
@@ -150,7 +150,7 @@ describe("planned activity data access", () => {
     });
     addPlannedActivity({ weeklyPlanId: plan.id, taskId: task.id, date: "2026-07-21" });
 
-    getDb().prepare("DELETE FROM task WHERE id = ?").run(task.id);
+    getDb().prepare("DELETE FROM task WHERE id = @id").run({ id: task.id });
 
     expect(listPlannedActivitiesForPlan(plan.id)).toHaveLength(0);
   });

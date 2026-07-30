@@ -24,18 +24,18 @@ function rowToCompletionDigest(row: CompletionDigestRow): CompletionDigest {
 export function upsertCompletionDigest(taskId: number, summary: string): CompletionDigest {
   getDb()
     .prepare(
-      `INSERT INTO completion_digest (task_id, summary) VALUES (?, ?)
+      `INSERT INTO completion_digest (task_id, summary) VALUES (@taskId, @summary)
        ON CONFLICT (task_id) DO UPDATE SET summary = excluded.summary, updated_at = datetime('now')`
     )
-    .run(taskId, summary);
+    .run({ taskId, summary });
 
   return getCompletionDigest(taskId)!;
 }
 
 export function getCompletionDigest(taskId: number): CompletionDigest | undefined {
   const row = getDb()
-    .prepare("SELECT task_id, summary, updated_at FROM completion_digest WHERE task_id = ?")
-    .get(taskId) as CompletionDigestRow | undefined;
+    .prepare("SELECT task_id, summary, updated_at FROM completion_digest WHERE task_id = @taskId")
+    .get({ taskId }) as CompletionDigestRow | undefined;
   return row ? rowToCompletionDigest(row) : undefined;
 }
 
@@ -55,19 +55,24 @@ export function replaceCompletionDigestAndDeleteCompletions(
 ): CompletionDigest {
   const db = getDb();
   const upsert = db.prepare(
-    `INSERT INTO completion_digest (task_id, summary) VALUES (?, ?)
+    `INSERT INTO completion_digest (task_id, summary) VALUES (@taskId, @summary)
      ON CONFLICT (task_id) DO UPDATE SET summary = excluded.summary, updated_at = datetime('now')`
   );
   const deleteCompletions =
     completionIds.length === 0
       ? undefined
       : db.prepare(
-          `DELETE FROM completion WHERE task_id = ? AND id IN (${completionIds.map(() => "?").join(", ")})`
+          `DELETE FROM completion WHERE task_id = @taskId AND id IN (${completionIds
+            .map((_, index) => `@completionId${index}`)
+            .join(", ")})`
         );
 
   db.transaction(() => {
-    upsert.run(taskId, summary);
-    deleteCompletions?.run(taskId, ...completionIds);
+    upsert.run({ taskId, summary });
+    deleteCompletions?.run({
+      taskId,
+      ...Object.fromEntries(completionIds.map((id, index) => [`completionId${index}`, id])),
+    });
   })();
 
   return getCompletionDigest(taskId)!;

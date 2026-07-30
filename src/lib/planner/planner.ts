@@ -600,16 +600,16 @@ function compactionResultSuffix(result: CompletionCompactionResult): string {
  */
 export async function runPlannerOnce(): Promise<void> {
   const recordRun = getDb().prepare(
-    "INSERT INTO planner_run (ran_at, status, result) VALUES (?, ?, ?)"
+    "INSERT INTO planner_run (ran_at, status, result) VALUES (@ranAt, @status, @result)"
   );
   let extraction: CorrectionExtractionResult = { applied: 0, failedTasks: 0, hadNotes: false };
   let compaction: CompletionCompactionResult = { tasksCompacted: 0, completionsFolded: 0 };
   const recordResult = (status: "ok" | "error", result: string) =>
-    recordRun.run(
-      new Date().toISOString(),
+    recordRun.run({
+      ranAt: new Date().toISOString(),
       status,
-      `${extractionResultPrefix(extraction)}${result}${compactionResultSuffix(compaction)}`
-    );
+      result: `${extractionResultPrefix(extraction)}${result}${compactionResultSuffix(compaction)}`,
+    });
 
   try {
     const weekStart = currentWeekStart(new Date());
