@@ -54,5 +54,9 @@ _Avoid_: Prompt log, request/response pair, LLM exchange
 A single global toggle — Work or Vacation — for the whole (single-user) system. Determines the weekly Time Budget available to Flexible Tasks and which weekday hours are assumed busy. Scheduled Tasks' fixed slots are honored regardless of Mode.
 _Avoid_: Profile, setting
 
+**Simulated Clock**:
+A dev-only override of what the whole app treats as "now" — a single explicit timestamp that changes only when moved forward by hand, never by the passage of real time. When active, it replaces every read of the current date or time the app makes, including the timestamps new rows are stamped with, and it takes over the Planner's run loop: automatic runs stop and a run only happens when triggered by hand.
+_Avoid_: Fake clock, test clock, mock time, dev clock
+
 **Time Budget**:
 The total weekly chore-time the Planner has available for Flexible Tasks, configured per Mode. When due Flexible Tasks' Durations exceed it, the Planner leaves the least-urgent ones off this week's Weekly Plan — they stay due and are reconsidered next time.
