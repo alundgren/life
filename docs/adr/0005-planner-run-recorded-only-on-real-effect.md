@@ -1,0 +1,12 @@
+# planner_run rows are written only for runs with real effect; routine ticks update a separate heartbeat
+
+`runPlannerOnce` was inserting a `planner_run` row on every 15-minute tick, including the common case where nothing happened ("Week X already planned") — about 35k rows/year, unbounded. It also had no guard against two ticks running concurrently, so a slow LLM call could let a second tick start before the first finished, double-applying Corrections or Completion Digest compactions.
+
+We decided a tick writes a `planner_run` row only when it had real effect: at least one Correction applied, at least one Task's Completions compacted, or the plan-generation phase did something other than its early-return ("already planned"/"nothing due"). Every other tick — including a routine no-op and a tick skipped because a previous run was still in-flight — only advances a separate `lastCheckedAt` heartbeat, persisted in its own single-row table so it survives a restart. `planner_run` itself is capped at 500 rows, trimmed on insert (the same shape as #43's Model Call log), because a real event isn't automatically rare: a persistent Ollama outage makes every tick error, and error is effect, so that path still needs a backstop against unbounded growth. The in-flight guard is a single module-level boolean around the whole of `runPlannerOnce` — not just the plan-generation section — because all three phases (correction extraction, digest compaction, plan generation/revision) read-then-write across their own `await`s and are equally unsafe to interleave.
+
+We considered giving an overlap-skip its own status value (`'skipped'`, alongside `'ok'`/`'error'`) so repeated overlap would leave a durable trail rather than just a live gauge. We rejected it: it's a zero-effect tick like any other no-op, and folding it into the heartbeat keeps `planner_run`'s two-value status meaningful ("did the domain work succeed or fail") without a third bucket that means "we didn't try."
+
+## Consequences
+
+- `getPlannerStatus()` gains `lastCheckedAt` (advances every tick) alongside the existing `lastRunAt`/`lastStatus`/`lastResult` (which now describe the last tick that actually did something, not the last tick that ran).
+- A run stuck in-flight long enough to eat many consecutive ticks is visible only as `lastCheckedAt` failing to advance relative to the 15-minute interval — there is no per-skip row to count how many ticks were dropped.
