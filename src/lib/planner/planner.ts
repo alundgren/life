@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db/client";
+import { attachModelCallOutcome } from "@/lib/db/modelCall";
 import {
   getLatestCompletionDatesByTask,
   hasCompletionsSince,
@@ -301,12 +302,20 @@ function extractJsonObject(text: string): string | undefined {
  * The entries of a model response that survive validation: a known Task id, a date inside the
  * week being planned, and no repeat of a (taskId, date) pair. Bad entries are dropped, not fatal.
  */
+interface ParsedPlannedActivities {
+  activities: NewPlannedActivity[];
+  proposed: number;
+  unknownTasks: number;
+  outsideWeek: number;
+  duplicates: number;
+}
+
 function parsePlannedActivities(
   response: string,
   knownTaskIds: Set<number>,
   datesInWeek: Set<string>,
   blockedTaskDates: Set<string> = new Set()
-): NewPlannedActivity[] | undefined {
+): ParsedPlannedActivities | undefined {
   const json = extractJsonObject(response);
   if (json === undefined) {
     return undefined;
@@ -326,6 +335,9 @@ function parsePlannedActivities(
 
   const seen = new Set<string>();
   const activities: NewPlannedActivity[] = [];
+  let unknownTasks = 0;
+  let outsideWeek = 0;
+  let duplicates = 0;
 
   for (const entry of entries) {
     if (typeof entry !== "object" || entry === null) {
@@ -333,20 +345,23 @@ function parsePlannedActivities(
     }
     const { taskId, date } = entry as { taskId?: unknown; date?: unknown };
     if (typeof taskId !== "number" || !Number.isInteger(taskId) || !knownTaskIds.has(taskId)) {
+      unknownTasks++;
       continue;
     }
     if (typeof date !== "string" || !datesInWeek.has(date)) {
+      outsideWeek++;
       continue;
     }
     const key = `${taskId}:${date}`;
     if (seen.has(key) || blockedTaskDates.has(key)) {
+      duplicates++;
       continue;
     }
     seen.add(key);
     activities.push({ taskId, date });
   }
 
-  return activities;
+  return { activities, proposed: entries.length, unknownTasks, outsideWeek, duplicates };
 }
 
 /**
@@ -392,6 +407,27 @@ function deferredResultSuffix(deferred: number): string {
   return ` ${deferred} model-proposed Planned ${deferred === 1 ? "Activity was" : "Activities were"} deferred for the Time Budget.`;
 }
 
+/** Attaching a diagnostic outcome must be as harmless as creating the diagnostic row. */
+function attachOutcome(modelCallId: number | undefined, outcome: string): void {
+  if (modelCallId === undefined) {
+    return;
+  }
+  try {
+    attachModelCallOutcome(modelCallId, outcome);
+  } catch {
+    // The Planner still owns its normal result even if the side-channel fails.
+  }
+}
+
+function planOutcome(parsed: ParsedPlannedActivities, deferred: number, written: number): string {
+  const dropped = [
+    `${parsed.unknownTasks} dropped as unknown Task`,
+    `${parsed.outsideWeek} dropped outside the week`,
+    `${parsed.duplicates} duplicates dropped`,
+  ];
+  return `${parsed.proposed} proposed; ${dropped.join(", ")}; ${deferred} deferred for the Time Budget; ${written} planned.`;
+}
+
 interface CorrectionExtractionResult {
   applied: number;
   failedTasks: number;
@@ -425,21 +461,29 @@ function correctionPrompt(task: Task, completions: Completion[]): string {
   ].join("\n");
 }
 
-function parseCorrection(response: string, currentDescription: string): string | undefined {
+type ParsedCorrection =
+  | { status: "applied"; text: string }
+  | { status: "unchanged" }
+  | { status: "unusable" };
+
+function parseCorrection(response: string, currentDescription: string): ParsedCorrection {
   const json = extractJsonObject(response);
   if (json === undefined) {
-    return undefined;
+    return { status: "unusable" };
   }
 
   try {
     const correction = (JSON.parse(json) as { correction?: unknown }).correction;
-    if (typeof correction !== "string") {
-      return undefined;
+    if (correction === null) {
+      return { status: "unchanged" };
     }
+    if (typeof correction !== "string") return { status: "unusable" };
     const text = correction.trim();
-    return text && text !== currentDescription ? text : undefined;
+    return text && text !== currentDescription
+      ? { status: "applied", text }
+      : { status: "unchanged" };
   } catch {
-    return undefined;
+    return { status: "unusable" };
   }
 }
 
@@ -471,16 +515,25 @@ async function extractCorrections(tasks: Task[]): Promise<CorrectionExtractionRe
 
     try {
       const env = getEnv();
-      const response = await callOllama(correctionPrompt(task, completions), {
+      const { response, modelCallId } = await callOllama(correctionPrompt(task, completions), {
         host: env.OLLAMA_HOST,
         model: env.OLLAMA_MODEL,
+        kind: "correction-extraction",
         format: "json",
       });
       const correction = parseCorrection(response, task.description);
-      if (correction !== undefined) {
-        applyCorrection(task.id, correction);
+      if (correction.status === "applied") {
+        applyCorrection(task.id, correction.text);
         result.applied++;
       }
+      attachOutcome(
+        modelCallId,
+        correction.status === "applied"
+          ? "Correction applied."
+          : correction.status === "unchanged"
+            ? "No Correction needed."
+            : "Response could not be parsed; no Correction applied."
+      );
       completions.forEach((completion) => markCompletionProcessed(completion.id));
     } catch {
       result.failedTasks++;
@@ -558,13 +611,18 @@ async function compactCompletions(tasks: Task[]): Promise<CompletionCompactionRe
 
     try {
       const env = getEnv();
-      const response = await callOllama(completionDigestPrompt(task, digestsByTask.get(taskId), completions), {
-        host: env.OLLAMA_HOST,
-        model: env.OLLAMA_MODEL,
-        format: "json",
-      });
+      const { response, modelCallId } = await callOllama(
+        completionDigestPrompt(task, digestsByTask.get(taskId), completions),
+        {
+          host: env.OLLAMA_HOST,
+          model: env.OLLAMA_MODEL,
+          kind: "completion-digest",
+          format: "json",
+        }
+      );
       const summary = parseCompletionDigest(response);
       if (summary === undefined) {
+        attachOutcome(modelCallId, "Response could not be parsed; no Completion Digest was written.");
         continue;
       }
 
@@ -575,6 +633,7 @@ async function compactCompletions(tasks: Task[]): Promise<CompletionCompactionRe
       );
       result.tasksCompacted++;
       result.completionsFolded += completions.length;
+      attachOutcome(modelCallId, `Completion Digest written; ${completions.length} Completions folded.`);
     } catch {
       // A failed Task remains entirely intact and will be retried on the next Planner run.
     }
@@ -702,9 +761,10 @@ export async function runPlannerOnce(): Promise<void> {
         );
 
     const env = getEnv();
-    const response = await callOllama(prompt, {
+    const { response, modelCallId } = await callOllama(prompt, {
       host: env.OLLAMA_HOST,
       model: env.OLLAMA_MODEL,
+      kind: existingPlan ? "plan-revision" : "plan-generation",
       format: "json",
     });
 
@@ -716,12 +776,13 @@ export async function runPlannerOnce(): Promise<void> {
     );
 
     if (parsedActivities === undefined) {
+      attachOutcome(modelCallId, "Response could not be parsed; 0 Planned Activities written.");
       recordResult("error", `Ollama returned no usable response for week ${weekStart}.`);
       return;
     }
 
     const { activities, deferred } = applyTimeBudget(
-      parsedActivities,
+      parsedActivities.activities,
       flexibleTasks,
       timeBudgetMinutes,
       frozenActivities
@@ -729,6 +790,7 @@ export async function runPlannerOnce(): Promise<void> {
 
     if (existingPlan) {
       replaceRevisablePlannedActivities(existingPlan.id, today, activities);
+      attachOutcome(modelCallId, planOutcome(parsedActivities, deferred, activities.length));
       recordResult(
         "ok",
         `Revised week ${weekStart} from ${today}: ${activities.length} Planned ${
@@ -740,6 +802,7 @@ export async function runPlannerOnce(): Promise<void> {
 
     const plannedActivities = [...fixedPlacements.map(({ activity }) => activity), ...activities];
     if (plannedActivities.length === 0) {
+      attachOutcome(modelCallId, planOutcome(parsedActivities, deferred, 0));
       recordResult(
         "ok",
         `Week ${weekStart} has nothing due.${deferredResultSuffix(deferred)}`
@@ -748,6 +811,7 @@ export async function runPlannerOnce(): Promise<void> {
     }
 
     createWeeklyPlanWithActivities(weekStart, plannedActivities);
+    attachOutcome(modelCallId, planOutcome(parsedActivities, deferred, activities.length));
     recordResult(
       "ok",
       `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and ${activities.length} model-placed Planned Activities.${deferredResultSuffix(deferred)}`

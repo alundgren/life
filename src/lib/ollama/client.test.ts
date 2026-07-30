@@ -1,24 +1,39 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { callOllama } from "./client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDbClient, resetDb, setDb } from "@/lib/db/client";
+import { runMigrations } from "@/lib/db/migrate";
+import { createModelCall, getModelCallById, listRecentModelCalls } from "@/lib/db/modelCall";
+import { callOllama, setModelCallRecorder } from "./client";
+
+const config = {
+  host: "http://localhost:11434",
+  model: "test-model",
+  kind: "plan-generation" as const,
+};
+
+function jsonResponse(response: string): Response {
+  return { ok: true, json: async () => ({ response }) } as Response;
+}
 
 describe("callOllama", () => {
+  beforeEach(() => {
+    const db = createDbClient(":memory:");
+    runMigrations(db);
+    setDb(db);
+  });
+
   afterEach(() => {
+    setModelCallRecorder(undefined);
+    resetDb();
     vi.unstubAllGlobals();
   });
 
   it("posts the prompt to the Ollama generate endpoint and returns the response text", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ response: "pong" }),
-    });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse("pong"));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await callOllama("ping", {
-      host: "http://localhost:11434",
-      model: "test-model",
-    });
+    const result = await callOllama("ping", config);
 
-    expect(result).toBe("pong");
+    expect(result).toEqual({ response: "pong", modelCallId: undefined });
     expect(fetchMock).toHaveBeenCalledWith("http://localhost:11434/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -26,18 +41,28 @@ describe("callOllama", () => {
     });
   });
 
-  it("forwards the requested response format when one is configured", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ response: "{}" }),
+  it("records a successful call with its request, response, model, kind, and duration", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("pong")));
+    setModelCallRecorder(createModelCall);
+
+    const result = await callOllama("ping", config);
+
+    expect(result.modelCallId).toBeDefined();
+    expect(getModelCallById(result.modelCallId!)).toMatchObject({
+      kind: "plan-generation",
+      model: "test-model",
+      requestText: "ping",
+      responseText: "pong",
+      status: "ok",
     });
+    expect(getModelCallById(result.modelCallId!)?.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("forwards the requested response format when one is configured", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse("{}"));
     vi.stubGlobal("fetch", fetchMock);
 
-    await callOllama("ping", {
-      host: "http://localhost:11434",
-      model: "test-model",
-      format: "json",
-    });
+    await callOllama("ping", { ...config, format: "json" });
 
     expect(fetchMock).toHaveBeenCalledWith("http://localhost:11434/api/generate", {
       method: "POST",
@@ -51,24 +76,58 @@ describe("callOllama", () => {
     });
   });
 
-  it("surfaces the underlying reason when the connection itself fails", async () => {
+  it("records connection failures and still re-raises their error", async () => {
     const failure = new TypeError("fetch failed");
     failure.cause = new Error("connect ECONNREFUSED 127.0.0.1:11434");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(failure));
+    setModelCallRecorder(createModelCall);
 
-    await expect(
-      callOllama("ping", { host: "http://localhost:11434", model: "test-model" })
-    ).rejects.toThrow("Ollama request to http://localhost:11434 failed: connect ECONNREFUSED 127.0.0.1:11434");
+    await expect(callOllama("ping", config)).rejects.toThrow(
+      "Ollama request to http://localhost:11434 failed: connect ECONNREFUSED 127.0.0.1:11434"
+    );
+    expect(listRecentModelCalls()).toMatchObject([
+      {
+        requestPreview: "ping",
+        errorPreview: "Ollama request to http://localhost:11434 failed: connect ECONNREFUSED 127.0.0.1:11434",
+        status: "error",
+      },
+    ]);
   });
 
-  it("throws a clear error when the request fails", async () => {
+  it("records failed statuses and still re-raises their error", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: false, status: 500, statusText: "Internal Server Error" })
     );
+    setModelCallRecorder(createModelCall);
 
-    await expect(
-      callOllama("ping", { host: "http://localhost:11434", model: "test-model" })
-    ).rejects.toThrow(/500/);
+    await expect(callOllama("ping", config)).rejects.toThrow("Ollama request failed: 500 Internal Server Error");
+    expect(listRecentModelCalls()[0]).toMatchObject({
+      errorPreview: "Ollama request failed: 500 Internal Server Error",
+      status: "error",
+    });
+  });
+
+  it("keeps only the 100 newest recorded calls", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("pong")));
+    setModelCallRecorder(createModelCall);
+
+    for (let index = 0; index < 101; index++) {
+      await callOllama(`prompt ${index}`, config);
+    }
+
+    const calls = listRecentModelCalls();
+    expect(calls).toHaveLength(100);
+    expect(calls[0].requestPreview).toBe("prompt 100");
+    expect(calls.at(-1)?.requestPreview).toBe("prompt 1");
+  });
+
+  it("keeps the Ollama request working when the recorder fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("pong")));
+    setModelCallRecorder(() => {
+      throw new Error("disk full");
+    });
+
+    await expect(callOllama("ping", config)).resolves.toEqual({ response: "pong", modelCallId: undefined });
   });
 });
