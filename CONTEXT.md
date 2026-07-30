@@ -54,6 +54,10 @@ _Avoid_: Prompt log, request/response pair, LLM exchange
 A single global toggle — Work or Vacation — for the whole (single-user) system. Determines the weekly Time Budget available to Flexible Tasks and which weekday hours are assumed busy. Scheduled Tasks' fixed slots are honored regardless of Mode.
 _Avoid_: Profile, setting
 
+**Application Time Zone**:
+The single timezone the whole system's calendar is expressed in — what "today" means, where a week starts and ends, and what a Scheduled Task's start and end times refer to. One zone for the whole deployment rather than per-user, and a named zone rather than a fixed offset, so it follows daylight saving on its own.
+_Avoid_: Local time, server time, offset
+
 **Simulated Clock**:
 A dev-only override of what the whole app treats as "now" — a single explicit timestamp that changes only when moved forward by hand, never by the passage of real time. When active, it replaces every read of the current date or time the app makes, including the timestamps new rows are stamped with, and it takes over the Planner's run loop: automatic runs stop and a run only happens when triggered by hand.
 _Avoid_: Fake clock, test clock, mock time, dev clock
