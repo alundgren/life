@@ -56,7 +56,7 @@ See `.env.example` for the full list. The app fails fast at startup with a clear
 
 ## Database migrations
 
-SQL migration files live in `migrations/`, numbered and applied in order (e.g. `0001_create_placeholder_message.sql`). Applied filenames are tracked in a `schema_migrations` table so a migration is never re-applied. Migrations are append-only — never edit a migration after it has merged; add a new one instead.
+SQL migration files live in `migrations/`, numbered and applied in order (starting with `0001_initial_schema.sql`). Applied filenames are tracked in a `schema_migrations` table so a migration is never re-applied. Once deployed, migrations are append-only — never edit a migration after it has merged; add a new one instead.
 
 ## Verification
 

@@ -4,13 +4,6 @@ import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import type { Task } from "@/lib/db/task";
 
-type PlannerStatus = {
-  running: boolean;
-  lastRunAt: string | null;
-  lastStatus: "ok" | "error" | null;
-  lastResult: string | null;
-};
-type PlaceholderResponse = { message: string | null; planner: PlannerStatus };
 type ClockResponse = { today: string; timeZone: string };
 type PlannedActivityForDay = {
   id: number;
@@ -45,7 +38,6 @@ function statusLabel(status: PlannedActivityForDay["status"]): string {
 export default function Home() {
   const [activities, setActivities] = useState<PlannedActivityForDay[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [placeholder, setPlaceholder] = useState<PlaceholderResponse | null>(null);
   const [loadingActivities, setLoadingActivities] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -83,12 +75,6 @@ export default function Home() {
       .catch(() => setLoadError("Failed to load Tasks."))
       .finally(() => setLoadingTasks(false));
 
-    fetch("/api/placeholder")
-      .then((res) => res.json())
-      .then((body: PlaceholderResponse) => setPlaceholder(body))
-      .catch(() => {
-        // Planner heartbeat is diagnostic only; daily logging should not fail because it is absent.
-      });
   }, []);
 
   useEffect(() => {
@@ -336,17 +322,6 @@ export default function Home() {
           {message}
         </p>
       )}
-
-      <footer className="border-t border-muted/30 pt-4 text-sm text-muted">
-        <p>{placeholder?.message ?? "Planner diagnostics unavailable."}</p>
-        {placeholder?.planner && (
-          <p className="mt-1">
-            Planner: {placeholder.planner.running ? "running" : "stopped"}
-            {placeholder.planner.lastRunAt &&
-              `; last ran ${placeholder.planner.lastRunAt} (${placeholder.planner.lastStatus})`}
-          </p>
-        )}
-      </footer>
     </main>
   );
 }
