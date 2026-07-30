@@ -17,6 +17,9 @@ export interface RecordCompletionInput {
   note?: string;
 }
 
+/** The number of recent raw Completions retained for each Task. */
+export const RECENT_COMPLETION_WINDOW_SIZE = 10;
+
 export class PlannedActivityAlreadyDoneError extends Error {
   constructor() {
     super("Planned Activity is already done.");
@@ -35,6 +38,22 @@ interface CompletionRow {
 
 const SELECT_COMPLETION_SQL =
   "SELECT id, task_id, planned_activity_id, completed_date, note, processed_at, created_at FROM completion";
+
+const SELECT_COMPACTION_ELIGIBLE_SQL = `
+  WITH ranked_completions AS (
+    SELECT
+      id, task_id, planned_activity_id, completed_date, note, processed_at, created_at,
+      ROW_NUMBER() OVER (
+        PARTITION BY task_id
+        ORDER BY completed_date DESC, id DESC
+      ) AS completion_rank
+    FROM completion
+  )
+  SELECT id, task_id, planned_activity_id, completed_date, note, processed_at, created_at
+  FROM ranked_completions
+  WHERE completion_rank > ? AND processed_at IS NOT NULL
+  ORDER BY task_id ASC, completed_date ASC, id ASC
+`;
 
 function rowToCompletion(row: CompletionRow): Completion {
   return {
@@ -131,6 +150,25 @@ export function listUnprocessedCompletions(): Completion[] {
     .prepare(`${SELECT_COMPLETION_SQL} WHERE processed_at IS NULL ORDER BY id`)
     .all() as CompletionRow[];
   return rows.map(rowToCompletion);
+}
+
+/**
+ * Processed Completions outside each Task's recent raw window, grouped by Task.
+ * The window includes all Completions so unprocessed notes can never be bypassed.
+ */
+export function listCompactionEligibleCompletionsByTask(): Map<number, Completion[]> {
+  const rows = getDb()
+    .prepare(SELECT_COMPACTION_ELIGIBLE_SQL)
+    .all(RECENT_COMPLETION_WINDOW_SIZE) as CompletionRow[];
+
+  const completionsByTask = new Map<number, Completion[]>();
+  for (const row of rows) {
+    const completion = rowToCompletion(row);
+    const completions = completionsByTask.get(completion.taskId) ?? [];
+    completions.push(completion);
+    completionsByTask.set(completion.taskId, completions);
+  }
+  return completionsByTask;
 }
 
 /** Marks a Completion as considered for Correction extraction. */

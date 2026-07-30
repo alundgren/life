@@ -38,3 +38,37 @@ export function getCompletionDigest(taskId: number): CompletionDigest | undefine
     .get(taskId) as CompletionDigestRow | undefined;
   return row ? rowToCompletionDigest(row) : undefined;
 }
+
+/** Current Completion Digest summaries keyed by Task id, for prompt assembly in one query. */
+export function getCompletionDigestSummariesByTask(): Map<number, string> {
+  const rows = getDb()
+    .prepare("SELECT task_id, summary FROM completion_digest")
+    .all() as Pick<CompletionDigestRow, "task_id" | "summary">[];
+  return new Map(rows.map((row) => [row.task_id, row.summary]));
+}
+
+/** Rewrites a Task's Digest and removes its compacted raw Completions atomically. */
+export function replaceCompletionDigestAndDeleteCompletions(
+  taskId: number,
+  summary: string,
+  completionIds: number[]
+): CompletionDigest {
+  const db = getDb();
+  const upsert = db.prepare(
+    `INSERT INTO completion_digest (task_id, summary) VALUES (?, ?)
+     ON CONFLICT (task_id) DO UPDATE SET summary = excluded.summary, updated_at = datetime('now')`
+  );
+  const deleteCompletions =
+    completionIds.length === 0
+      ? undefined
+      : db.prepare(
+          `DELETE FROM completion WHERE task_id = ? AND id IN (${completionIds.map(() => "?").join(", ")})`
+        );
+
+  db.transaction(() => {
+    upsert.run(taskId, summary);
+    deleteCompletions?.run(taskId, ...completionIds);
+  })();
+
+  return getCompletionDigest(taskId)!;
+}

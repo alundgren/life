@@ -2,11 +2,16 @@ import { getDb } from "@/lib/db/client";
 import {
   getLatestCompletionDatesByTask,
   hasCompletionsSince,
+  listCompactionEligibleCompletionsByTask,
   listCompletionsForDateRange,
   listUnprocessedCompletions,
   markCompletionProcessed,
   type Completion,
 } from "@/lib/db/completion";
+import {
+  getCompletionDigestSummariesByTask,
+  replaceCompletionDigestAndDeleteCompletions,
+} from "@/lib/db/completionDigest";
 import { applyCorrection, hasCorrectionsSince } from "@/lib/db/correction";
 import { getMode, type ModeValue } from "@/lib/db/mode";
 import { listPlannedActivitiesForPlan, type PlannedActivity } from "@/lib/db/plannedActivity";
@@ -141,12 +146,17 @@ function assumedBusyHours(mode: ModeValue): string {
   return mode === "work" ? "Mon-Fri 09:00-17:00" : "the week is mostly open";
 }
 
-function taskLine(task: FlexibleTask, lastCompletionDate: string | undefined): string {
+function taskLine(
+  task: FlexibleTask,
+  lastCompletionDate: string | undefined,
+  completionDigest: string | undefined
+): string {
   const duration = `${taskDurationMinutes(task)} minutes`;
   return (
     `- id ${task.id} | flexible | "${task.description}" | ${duration} | ` +
     `wanted ${task.frequencyText}, ` +
-    `${lastCompletionDate === undefined ? "never completed" : `last completed ${lastCompletionDate}`}`
+    `${lastCompletionDate === undefined ? "never completed" : `last completed ${lastCompletionDate}`}` +
+    (completionDigest === undefined ? "" : `, completion digest: "${completionDigest}"`)
   );
 }
 
@@ -157,12 +167,13 @@ function buildPrompt(
   timeBudgetMinutes: number | undefined,
   flexibleTasks: FlexibleTask[],
   fixedPlacements: ScheduledPlacement[],
-  lastCompletionDates: Map<number, string>
+  lastCompletionDates: Map<number, string>,
+  completionDigests: Map<number, string>
 ): string {
   // dates[0] is the Monday, so the weekday name follows from the offset.
   const days = dates.map((date, offset) => `${date} (${WEEKDAY_NAMES[(offset + 1) % 7]})`).join("\n");
   const taskLines = flexibleTasks
-    .map((task) => taskLine(task, lastCompletionDates.get(task.id)))
+    .map((task) => taskLine(task, lastCompletionDates.get(task.id), completionDigests.get(task.id)))
     .join("\n");
   const fixedPlacementLines = fixedPlacements
     .map(
@@ -218,6 +229,7 @@ function buildRevisionPrompt(
   flexibleTasks: FlexibleTask[],
   fixedPlacements: ScheduledPlacement[],
   lastCompletionDates: Map<number, string>,
+  completionDigests: Map<number, string>,
   frozenActivities: PlannedActivity[],
   revisableActivities: PlannedActivity[],
   completions: Completion[]
@@ -230,7 +242,8 @@ function buildRevisionPrompt(
       timeBudgetMinutes,
       flexibleTasks,
       fixedPlacements,
-      lastCompletionDates
+      lastCompletionDates,
+      completionDigests
     ),
     "",
     `Today is ${today}. Revise only today and the remaining days of this week; do not plan past dates.`,
@@ -385,6 +398,11 @@ interface CorrectionExtractionResult {
   hadNotes: boolean;
 }
 
+interface CompletionCompactionResult {
+  tasksCompacted: number;
+  completionsFolded: number;
+}
+
 function correctionPrompt(task: Task, completions: Completion[]): string {
   const notes = completions
     .filter((completion) => completion.note?.trim())
@@ -485,6 +503,97 @@ function extractionResultPrefix(result: CorrectionExtractionResult): string {
   } deferred after extraction failure. `;
 }
 
+function completionDigestPrompt(
+  task: Task,
+  previousDigest: string | undefined,
+  completions: Completion[]
+): string {
+  const completionLines = completions
+    .map(
+      (completion) =>
+        `- completed ${completion.completedDate} | note: "${completion.note ?? "(none)"}"`
+    )
+    .join("\n");
+
+  return [
+    "You maintain a short rolling Completion Digest for a recurring Task.",
+    "Rewrite one complete summary that preserves useful long-run patterns from the previous Digest and these ageing-out Completions.",
+    "The raw Completion records are about to be deleted, so retain anything worth carrying forward.",
+    "Respond with JSON only in exactly this shape: {\"summary\": \"rolling summary\"}.",
+    "Keep the summary concise and do not mention that you are summarising records.",
+    "",
+    `Task id: ${task.id}`,
+    `Task description: "${task.description}"`,
+    `Previous Completion Digest: ${previousDigest === undefined ? "(none)" : `"${previousDigest}"`}`,
+    "Ageing-out Completions:",
+    completionLines,
+  ].join("\n");
+}
+
+function parseCompletionDigest(response: string): string | undefined {
+  const json = extractJsonObject(response);
+  if (json === undefined) {
+    return undefined;
+  }
+
+  try {
+    const summary = (JSON.parse(json) as { summary?: unknown }).summary;
+    return typeof summary === "string" && summary.trim() ? summary.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Rewrites and deletes each Task's eligible Completion batch independently. */
+async function compactCompletions(tasks: Task[]): Promise<CompletionCompactionResult> {
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const digestsByTask = getCompletionDigestSummariesByTask();
+  const result: CompletionCompactionResult = { tasksCompacted: 0, completionsFolded: 0 };
+
+  for (const [taskId, completions] of listCompactionEligibleCompletionsByTask()) {
+    const task = tasksById.get(taskId);
+    if (task === undefined) {
+      continue;
+    }
+
+    try {
+      const env = getEnv();
+      const response = await callOllama(completionDigestPrompt(task, digestsByTask.get(taskId), completions), {
+        host: env.OLLAMA_HOST,
+        model: env.OLLAMA_MODEL,
+        format: "json",
+      });
+      const summary = parseCompletionDigest(response);
+      if (summary === undefined) {
+        continue;
+      }
+
+      replaceCompletionDigestAndDeleteCompletions(
+        taskId,
+        summary,
+        completions.map((completion) => completion.id)
+      );
+      result.tasksCompacted++;
+      result.completionsFolded += completions.length;
+    } catch {
+      // A failed Task remains entirely intact and will be retried on the next Planner run.
+    }
+  }
+
+  return result;
+}
+
+function compactionResultSuffix(result: CompletionCompactionResult): string {
+  if (result.tasksCompacted === 0) {
+    return "";
+  }
+  return ` ${result.tasksCompacted} ${
+    result.tasksCompacted === 1 ? "Task was" : "Tasks were"
+  } compacted; ${result.completionsFolded} ${
+    result.completionsFolded === 1 ? "Completion was" : "Completions were"
+  } folded into Completion Digests.`;
+}
+
 /**
  * Generates this week's Weekly Plan when none exists. An existing plan is revised only after new
  * Completion or Correction feedback has arrived since the Planner last wrote it.
@@ -494,12 +603,18 @@ export async function runPlannerOnce(): Promise<void> {
     "INSERT INTO planner_run (ran_at, status, result) VALUES (?, ?, ?)"
   );
   let extraction: CorrectionExtractionResult = { applied: 0, failedTasks: 0, hadNotes: false };
+  let compaction: CompletionCompactionResult = { tasksCompacted: 0, completionsFolded: 0 };
   const recordResult = (status: "ok" | "error", result: string) =>
-    recordRun.run(new Date().toISOString(), status, `${extractionResultPrefix(extraction)}${result}`);
+    recordRun.run(
+      new Date().toISOString(),
+      status,
+      `${extractionResultPrefix(extraction)}${result}${compactionResultSuffix(compaction)}`
+    );
 
   try {
     const weekStart = currentWeekStart(new Date());
     extraction = await extractCorrections(listTasks());
+    compaction = await compactCompletions(listTasks());
     const tasks = listTasks();
     const existingPlan = getWeeklyPlanByWeek(weekStart);
     if (existingPlan && !hasCompletionsSince(existingPlan.revisedAt) && !hasCorrectionsSince(existingPlan.revisedAt)) {
@@ -542,6 +657,7 @@ export async function runPlannerOnce(): Promise<void> {
 
     const today = formatLocalDate(new Date());
     const lastCompletionDates = getLatestCompletionDatesByTask();
+    const completionDigests = getCompletionDigestSummariesByTask();
     const existingActivities = existingPlan ? listPlannedActivitiesForPlan(existingPlan.id) : [];
     const scheduledTaskIds = new Set(scheduledTasks.map((task) => task.id));
     const scheduledTasksById = new Map(scheduledTasks.map((task) => [task.id, task]));
@@ -569,6 +685,7 @@ export async function runPlannerOnce(): Promise<void> {
           flexibleTasks,
           promptFixedPlacements,
           lastCompletionDates,
+          completionDigests,
           frozenActivities,
           revisableActivities,
           listCompletionsForDateRange(dates[0], dates.at(-1)!)
@@ -580,7 +697,8 @@ export async function runPlannerOnce(): Promise<void> {
           timeBudgetMinutes,
           flexibleTasks,
           promptFixedPlacements,
-          lastCompletionDates
+          lastCompletionDates,
+          completionDigests
         );
 
     const env = getEnv();
