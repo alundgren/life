@@ -106,12 +106,6 @@ function stubFetch({
     if (method === "GET" && url === "/api/tasks") {
       return jsonResponse(tasks);
     }
-    if (method === "GET" && url === "/api/placeholder") {
-      return jsonResponse({
-        message: "Placeholder is alive.",
-        planner: { running: true, lastRunAt: null, lastStatus: null, lastResult: null },
-      });
-    }
     if (method === "POST" && url === "/api/completions") {
       posts.push(body);
       if (failCompletion) {
@@ -150,7 +144,6 @@ describe("daily view page", () => {
     expect(screen.getByText("16:00-19:00")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Tick off Clean the windows" })).toBeInTheDocument();
     expect(screen.queryByText(/Clean the windows.*16:00/s)).not.toBeInTheDocument();
-    expect(screen.getByText("Planner: running")).toBeInTheDocument();
   });
 
   it("shows the empty-day message while ad-hoc logging remains available", async () => {

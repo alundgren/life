@@ -8,12 +8,6 @@ describe("runMigrations", () => {
 
     runMigrations(db);
 
-    const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-      .all()
-      .map((row) => (row as { name: string }).name);
-    expect(tables).toContain("placeholder_message");
-
     const applied = db.prepare("SELECT filename FROM schema_migrations").all();
     expect(applied).toEqual([{ filename: "0001_initial_schema.sql" }]);
 
@@ -28,12 +22,12 @@ describe("runMigrations", () => {
     const db = createDbClient(":memory:");
     runMigrations(db);
     const before = db
-      .prepare("SELECT COUNT(*) as count FROM placeholder_message")
+      .prepare("SELECT COUNT(*) as count FROM mode")
       .get() as { count: number };
 
     runMigrations(db);
     const after = db
-      .prepare("SELECT COUNT(*) as count FROM placeholder_message")
+      .prepare("SELECT COUNT(*) as count FROM mode")
       .get() as { count: number };
 
     expect(after.count).toBe(before.count);
