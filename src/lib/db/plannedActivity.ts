@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db/client";
+import { getCurrentTime } from "@/lib/simulatedClock";
 
 export type PlannedActivityStatus = "pending" | "done" | "missed";
 
@@ -57,14 +58,15 @@ function rowToPlannedActivity(row: PlannedActivityRow): PlannedActivity {
 export function addPlannedActivity(input: AddPlannedActivityInput): PlannedActivity {
   const db = getDb();
   const insert = db.prepare(
-    `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status)
-     VALUES (@weeklyPlanId, @taskId, @date, @status)`
+    `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status, created_at)
+     VALUES (@weeklyPlanId, @taskId, @date, @status, @createdAt)`
   );
-  const touchPlan = db.prepare("UPDATE weekly_plan SET updated_at = datetime('now') WHERE id = @weeklyPlanId");
+  const touchPlan = db.prepare("UPDATE weekly_plan SET updated_at = @updatedAt WHERE id = @weeklyPlanId");
 
   const id = db.transaction(() => {
-    const result = insert.run({ ...input, status: input.status ?? "pending" });
-    touchPlan.run({ weeklyPlanId: input.weeklyPlanId });
+    const now = getCurrentTime().toISOString();
+    const result = insert.run({ ...input, status: input.status ?? "pending", createdAt: now });
+    touchPlan.run({ weeklyPlanId: input.weeklyPlanId, updatedAt: now });
     return Number(result.lastInsertRowid);
   })();
 
@@ -76,13 +78,13 @@ export function updatePlannedActivityStatus(id: number, status: PlannedActivityS
   const db = getDb();
   const update = db.prepare("UPDATE planned_activity SET status = @status WHERE id = @id");
   const touchPlan = db.prepare(
-    `UPDATE weekly_plan SET updated_at = datetime('now')
+    `UPDATE weekly_plan SET updated_at = @updatedAt
      WHERE id = (SELECT weekly_plan_id FROM planned_activity WHERE id = @id)`
   );
 
   db.transaction(() => {
     update.run({ id, status });
-    touchPlan.run({ id });
+    touchPlan.run({ id, updatedAt: getCurrentTime().toISOString() });
   })();
 }
 

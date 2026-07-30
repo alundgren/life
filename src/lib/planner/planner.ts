@@ -32,6 +32,7 @@ import {
 } from "@/lib/db/weeklyPlan";
 import { getEnv } from "@/lib/env";
 import { callOllama } from "@/lib/ollama/client";
+import { formatLocalDate, getCurrentTime, isSimulatedClockEnabled } from "@/lib/simulatedClock";
 
 const RUN_INTERVAL_MS = 15 * 60 * 1000;
 const WEEKDAY_NAMES = [
@@ -56,6 +57,9 @@ let timer: ReturnType<typeof setInterval> | undefined;
 
 /** Starts the background Planner loop: runs immediately, then every intervalMs. */
 export function startPlanner(intervalMs: number = RUN_INTERVAL_MS): void {
+  if (isSimulatedClockEnabled()) {
+    return;
+  }
   if (running) {
     return;
   }
@@ -83,13 +87,6 @@ export function getPlannerStatus(): PlannerStatus {
     lastStatus: (row?.status as "ok" | "error" | undefined) ?? null,
     lastResult: row ? row.result : null,
   };
-}
-
-function formatLocalDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 /** The Monday of the week the given moment falls in, in server-local time. */
@@ -665,13 +662,14 @@ export async function runPlannerOnce(): Promise<void> {
   let compaction: CompletionCompactionResult = { tasksCompacted: 0, completionsFolded: 0 };
   const recordResult = (status: "ok" | "error", result: string) =>
     recordRun.run({
-      ranAt: new Date().toISOString(),
+      ranAt: getCurrentTime().toISOString(),
       status,
       result: `${extractionResultPrefix(extraction)}${result}${compactionResultSuffix(compaction)}`,
     });
 
   try {
-    const weekStart = currentWeekStart(new Date());
+    const now = getCurrentTime();
+    const weekStart = currentWeekStart(now);
     extraction = await extractCorrections(listTasks());
     compaction = await compactCompletions(listTasks());
     const tasks = listTasks();
@@ -714,7 +712,7 @@ export async function runPlannerOnce(): Promise<void> {
       return;
     }
 
-    const today = formatLocalDate(new Date());
+    const today = formatLocalDate(now);
     const lastCompletionDates = getLatestCompletionDatesByTask();
     const completionDigests = getCompletionDigestSummariesByTask();
     const existingActivities = existingPlan ? listPlannedActivitiesForPlan(existingPlan.id) : [];

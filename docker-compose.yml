@@ -10,6 +10,7 @@ services:
     environment:
       SQLITE_DB_PATH: /app/data/life.db
       OLLAMA_HOST: http://ollama:11434
+      SIMULATED_CLOCK: "true"
       WATCHPACK_POLLING: "true"
     volumes:
       - .:/app

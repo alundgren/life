@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db/client";
+import { getCurrentTime } from "@/lib/simulatedClock";
 
 export interface Completion {
   id: number;
@@ -71,17 +72,18 @@ function rowToCompletion(row: CompletionRow): Completion {
 export function recordCompletion(input: RecordCompletionInput): Completion {
   const db = getDb();
   const insert = db.prepare(
-    `INSERT INTO completion (task_id, planned_activity_id, completed_date, note)
-     VALUES (@taskId, @plannedActivityId, @completedDate, @note)`
+    `INSERT INTO completion (task_id, planned_activity_id, completed_date, note, created_at)
+     VALUES (@taskId, @plannedActivityId, @completedDate, @note, @createdAt)`
   );
   const readActivity = db.prepare("SELECT status FROM planned_activity WHERE id = @plannedActivityId");
   const markDone = db.prepare("UPDATE planned_activity SET status = 'done' WHERE id = @plannedActivityId");
   const touchPlan = db.prepare(
-    `UPDATE weekly_plan SET updated_at = datetime('now')
+    `UPDATE weekly_plan SET updated_at = @updatedAt
      WHERE id = (SELECT weekly_plan_id FROM planned_activity WHERE id = @plannedActivityId)`
   );
 
   const id = db.transaction(() => {
+    const now = getCurrentTime().toISOString();
     if (input.plannedActivityId !== undefined) {
       const activity = readActivity.get({ plannedActivityId: input.plannedActivityId }) as { status: string } | undefined;
       if (activity?.status === "done") {
@@ -91,13 +93,14 @@ export function recordCompletion(input: RecordCompletionInput): Completion {
 
     const result = insert.run({
       ...input,
+      createdAt: now,
       plannedActivityId: input.plannedActivityId ?? null,
       note: input.note ?? null,
     });
 
     if (input.plannedActivityId !== undefined) {
       markDone.run({ plannedActivityId: input.plannedActivityId });
-      touchPlan.run({ plannedActivityId: input.plannedActivityId });
+      touchPlan.run({ plannedActivityId: input.plannedActivityId, updatedAt: now });
     }
 
     return Number(result.lastInsertRowid);
@@ -172,5 +175,7 @@ export function listCompactionEligibleCompletionsByTask(): Map<number, Completio
 
 /** Marks a Completion as considered for Correction extraction. */
 export function markCompletionProcessed(id: number): void {
-  getDb().prepare("UPDATE completion SET processed_at = datetime('now') WHERE id = @id").run({ id });
+  getDb()
+    .prepare("UPDATE completion SET processed_at = @processedAt WHERE id = @id")
+    .run({ id, processedAt: getCurrentTime().toISOString() });
 }

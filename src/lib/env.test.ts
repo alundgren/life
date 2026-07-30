@@ -11,6 +11,18 @@ describe("loadEnv", () => {
     expect(env.SQLITE_DB_PATH).toBe("/tmp/test.db");
     expect(env.OLLAMA_HOST).toBe("http://localhost:11434");
     expect(env.OLLAMA_MODEL).toBe("test-model");
+    expect(env.SIMULATED_CLOCK).toBe(false);
+  });
+
+  it("enables the Simulated Clock only when explicitly set to true", () => {
+    expect(
+      loadEnv({
+        SQLITE_DB_PATH: "/tmp/test.db",
+        OLLAMA_HOST: "http://localhost:11434",
+        OLLAMA_MODEL: "test-model",
+        SIMULATED_CLOCK: "true",
+      } as unknown as NodeJS.ProcessEnv).SIMULATED_CLOCK
+    ).toBe(true);
   });
 
   it("throws a clear error naming the missing vars", () => {

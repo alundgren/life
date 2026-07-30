@@ -8,6 +8,11 @@ type Settings = {
   mode: ModeValue;
   budgets: Record<ModeValue, number>;
 };
+type Clock = {
+  enabled: boolean;
+  now: string;
+  today: string;
+};
 
 type BudgetForm = Record<ModeValue, string>;
 
@@ -32,6 +37,8 @@ const fieldClass =
   "w-full rounded-md border border-muted/40 bg-background px-3 py-2 text-base disabled:opacity-60";
 const primaryButtonClass =
   "min-h-11 rounded-md bg-foreground px-4 py-2 text-base font-medium text-background disabled:opacity-60";
+const secondaryButtonClass =
+  "min-h-11 rounded-md border border-muted/40 px-4 py-2 text-base disabled:opacity-60";
 
 function budgetFormFromSettings(settings: Settings): BudgetForm {
   return {
@@ -47,22 +54,25 @@ function parseBudget(value: string): number | null {
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [clock, setClock] = useState<Clock | null>(null);
   const [budgetForm, setBudgetForm] = useState<BudgetForm>({ work: "", vacation: "" });
   const [loading, setLoading] = useState(true);
   const [savingMode, setSavingMode] = useState(false);
   const [savingBudgets, setSavingBudgets] = useState(false);
+  const [clockAction, setClockAction] = useState<"advance" | "planner" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/settings")
-      .then((res) => {
-        if (!res.ok) throw new Error("bad status");
-        return res.json();
+    Promise.all([fetch("/api/settings"), fetch("/api/simulated-clock")])
+      .then(async ([settingsResponse, clockResponse]) => {
+        if (!settingsResponse.ok || !clockResponse.ok) throw new Error("bad status");
+        return Promise.all([settingsResponse.json() as Promise<Settings>, clockResponse.json() as Promise<Clock>]);
       })
-      .then((body: Settings) => {
-        setSettings(body);
-        setBudgetForm(budgetFormFromSettings(body));
+      .then(([savedSettings, savedClock]) => {
+        setSettings(savedSettings);
+        setBudgetForm(budgetFormFromSettings(savedSettings));
+        setClock(savedClock);
       })
       .catch(() => setError("Failed to load Settings."))
       .finally(() => setLoading(false));
@@ -127,6 +137,41 @@ export default function SettingsPage() {
     }
   }
 
+  async function advanceClock(days: 1 | 7) {
+    setError(null);
+    setMessage(null);
+    setClockAction("advance");
+    try {
+      const response = await fetch("/api/simulated-clock", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ days }),
+      });
+      if (!response.ok) throw new Error("Failed to advance the Simulated Clock.");
+      setClock((await response.json()) as Clock);
+      setMessage(`Simulated clock advanced by ${days === 1 ? "one day" : "one week"}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to advance the Simulated Clock.");
+    } finally {
+      setClockAction(null);
+    }
+  }
+
+  async function runPlanner() {
+    setError(null);
+    setMessage(null);
+    setClockAction("planner");
+    try {
+      const response = await fetch("/api/planner/run", { method: "POST" });
+      if (!response.ok) throw new Error("Failed to run the Planner.");
+      setMessage("Planner run finished.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to run the Planner.");
+    } finally {
+      setClockAction(null);
+    }
+  }
+
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 p-4 sm:p-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -180,6 +225,39 @@ export default function SettingsPage() {
               View Model Calls
             </Link>
           </section>
+
+          {clock?.enabled && (
+            <section>
+              <h2 className="text-lg font-medium">Simulated clock</h2>
+              <p className="mt-3 text-sm text-muted">Current simulated date: {clock.today}</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => advanceClock(1)}
+                  disabled={clockAction !== null || savingMode || savingBudgets}
+                  className={secondaryButtonClass}
+                >
+                  +1 day
+                </button>
+                <button
+                  type="button"
+                  onClick={() => advanceClock(7)}
+                  disabled={clockAction !== null || savingMode || savingBudgets}
+                  className={secondaryButtonClass}
+                >
+                  +1 week
+                </button>
+                <button
+                  type="button"
+                  onClick={runPlanner}
+                  disabled={clockAction !== null || savingMode || savingBudgets}
+                  className={primaryButtonClass}
+                >
+                  {clockAction === "planner" ? "Running…" : "Run planner now"}
+                </button>
+              </div>
+            </section>
+          )}
 
           <section>
             <h2 className="text-lg font-medium">Weekly Time Budget</h2>

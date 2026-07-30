@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db/client";
+import { getCurrentTime } from "@/lib/simulatedClock";
 
 export const MAX_CORRECTIONS_PER_TASK = 5;
 
@@ -28,7 +29,9 @@ function rowToCorrection(row: CorrectionRow): Correction {
 /** Inserts a Correction and updates the Task's description to match, in one transaction. */
 export function applyCorrection(taskId: number, text: string): void {
   const db = getDb();
-  const insertCorrection = db.prepare("INSERT INTO correction (task_id, text) VALUES (@taskId, @text)");
+  const insertCorrection = db.prepare(
+    "INSERT INTO correction (task_id, text, created_at) VALUES (@taskId, @text, @createdAt)"
+  );
   const updateDescription = db.prepare("UPDATE task SET description = @text WHERE id = @taskId");
   const discardOlderCorrections = db.prepare(
     `DELETE FROM correction
@@ -42,7 +45,7 @@ export function applyCorrection(taskId: number, text: string): void {
   );
 
   db.transaction(() => {
-    insertCorrection.run({ taskId, text });
+    insertCorrection.run({ taskId, text, createdAt: getCurrentTime().toISOString() });
     updateDescription.run({ taskId, text });
     discardOlderCorrections.run({ taskId, maxCorrectionsPerTask: MAX_CORRECTIONS_PER_TASK });
   })();

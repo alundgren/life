@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db/client";
+import { getCurrentTime } from "@/lib/simulatedClock";
 
 export type ModeValue = "work" | "vacation";
 
@@ -15,6 +16,6 @@ export function getMode(): ModeValue {
 /** Switches the system's Mode. */
 export function setMode(value: ModeValue): void {
   getDb()
-    .prepare("UPDATE mode SET value = @value, updated_at = datetime('now') WHERE id = 1")
-    .run({ value });
+    .prepare("UPDATE mode SET value = @value, updated_at = @updatedAt WHERE id = 1")
+    .run({ value, updatedAt: getCurrentTime().toISOString() });
 }

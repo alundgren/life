@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db/client";
+import { getCurrentTime } from "@/lib/simulatedClock";
 
 export type TaskKind = "scheduled" | "flexible";
 
@@ -92,14 +93,16 @@ function rowToTask(row: TaskRow): Task {
 /** Inserts the parent `task` row and its `task_scheduled` child row in one transaction. */
 export function createScheduledTask(input: CreateScheduledTaskInput): ScheduledTask {
   const db = getDb();
-  const insertTask = db.prepare("INSERT INTO task (kind, description) VALUES ('scheduled', @description)");
+  const insertTask = db.prepare(
+    "INSERT INTO task (kind, description, created_at) VALUES ('scheduled', @description, @createdAt)"
+  );
   const insertScheduled = db.prepare(
     `INSERT INTO task_scheduled (task_id, weekday, start_time, end_time, recurrence_interval_weeks)
      VALUES (@taskId, @weekday, @startTime, @endTime, @recurrenceIntervalWeeks)`
   );
 
   const taskId = db.transaction(() => {
-    const result = insertTask.run({ description: input.description });
+    const result = insertTask.run({ description: input.description, createdAt: getCurrentTime().toISOString() });
     const id = Number(result.lastInsertRowid);
     insertScheduled.run({ taskId: id, ...input });
     return id;
@@ -111,13 +114,15 @@ export function createScheduledTask(input: CreateScheduledTaskInput): ScheduledT
 /** Inserts the parent `task` row and its `task_flexible` child row in one transaction. */
 export function createFlexibleTask(input: CreateFlexibleTaskInput): FlexibleTask {
   const db = getDb();
-  const insertTask = db.prepare("INSERT INTO task (kind, description) VALUES ('flexible', @description)");
+  const insertTask = db.prepare(
+    "INSERT INTO task (kind, description, created_at) VALUES ('flexible', @description, @createdAt)"
+  );
   const insertFlexible = db.prepare(
     "INSERT INTO task_flexible (task_id, frequency_text, duration_minutes) VALUES (@taskId, @frequencyText, @durationMinutes)"
   );
 
   const taskId = db.transaction(() => {
-    const result = insertTask.run({ description: input.description });
+    const result = insertTask.run({ description: input.description, createdAt: getCurrentTime().toISOString() });
     const id = Number(result.lastInsertRowid);
     insertFlexible.run({ taskId: id, ...input });
     return id;

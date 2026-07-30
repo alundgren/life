@@ -9,6 +9,7 @@ type Settings = {
   mode: "work" | "vacation";
   budgets: { work: number; vacation: number };
 };
+type Clock = { enabled: boolean; now: string; today: string };
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -25,17 +26,30 @@ function deferredResponse() {
   return { promise, resolve };
 }
 
-function stubFetch(initial: Settings, options: { failPut?: string; deferPut?: boolean } = {}) {
+function stubFetch(
+  initial: Settings,
+  options: { failPut?: string; deferPut?: boolean; clock?: Clock } = {}
+) {
   let stored = initial;
+  let clock = options.clock ?? { enabled: false, now: "2026-07-25T12:00:00.000Z", today: "2026-07-25" };
   const pending = options.deferPut ? deferredResponse() : null;
 
   const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
 
-    if (method === "GET") {
+    if (method === "GET" && input === "/api/settings") {
       return jsonResponse(stored);
     }
+    if (method === "GET" && input === "/api/simulated-clock") return jsonResponse(clock);
+    if (method === "POST" && input === "/api/simulated-clock") {
+      const days = body.days as number;
+      const next = new Date(clock.now);
+      next.setUTCDate(next.getUTCDate() + days);
+      clock = { ...clock, now: next.toISOString(), today: next.toISOString().slice(0, 10) };
+      return jsonResponse(clock);
+    }
+    if (method === "POST" && input === "/api/planner/run") return new Response(null, { status: 204 });
     if (method === "PUT") {
       if (pending) return pending.promise;
       if (options.failPut) return jsonResponse({ error: options.failPut }, 400);
@@ -174,5 +188,25 @@ describe("Settings page", () => {
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Failed to load Settings."));
     expect(screen.queryByLabelText("Work minutes")).not.toBeInTheDocument();
+  });
+
+  it("shows Simulated Clock controls only when the server enables the clock", async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = stubFetch(initialSettings, {
+      clock: { enabled: true, now: "2026-07-25T12:00:00.000Z", today: "2026-07-25" },
+    });
+    render(<SettingsPage />);
+
+    expect(await screen.findByText("Current simulated date: 2026-07-25")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "+1 week" }));
+    expect(await screen.findByText("Simulated clock advanced by one week.")).toBeInTheDocument();
+    expect(screen.getByText("Current simulated date: 2026-08-01")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Run planner now" }));
+    expect(await screen.findByText("Planner run finished.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls).toContainEqual([
+      "/api/simulated-clock",
+      expect.objectContaining({ method: "POST" }),
+    ]);
+    expect(fetchMock.mock.calls).toContainEqual(["/api/planner/run", { method: "POST" }]);
   });
 });
