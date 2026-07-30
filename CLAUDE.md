@@ -31,6 +31,7 @@ pnpm test    # must exit 0
 ## Data layer
 
 - SQLite via a `better-sqlite3` singleton (`src/lib/db/client.ts`), WAL mode and foreign keys on. Tests inject an in-memory db via `setDb()`/`resetDb()` instead of going through the real env-backed singleton.
+- Use named SQLite parameters (for example, `:taskId`) when a query has parameters, unless SQLite requires another form.
 - Migrations are numbered SQL files under `migrations/` (e.g. `0001_create_placeholder_message.sql`), applied in order by `src/lib/db/migrate.ts` and tracked in a `schema_migrations` table so a file is never re-applied. Migrations are append-only — never edit one after it has merged; add a new one instead.
 - Required environment variables are validated at process start (`src/lib/env.ts`, invoked from `src/instrumentation.ts` alongside the migration run) so misconfiguration fails fast at boot, not on first request. See `.env.example` for the full list.
 - Domain entities get one typed data-access module per entity under `src/lib/db/` (e.g. `task.ts`, `correction.ts`) — camelCase TS types over snake_case columns; application code reads and writes through these modules rather than raw SQL. A 1:1 parent/child split (e.g. `task` + its `task_scheduled`/`task_flexible` kind table) is written through a single transactional create function per kind so a parent row is never left without its child row.

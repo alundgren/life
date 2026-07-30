@@ -77,6 +77,10 @@ describe("Settings page", () => {
     expect(screen.getByLabelText("Vacation minutes")).toHaveValue(600);
     expect(screen.queryByText("Current Mode")).not.toBeInTheDocument();
     expect(screen.getByText("Scheduled Tasks keep their fixed slots in either Mode.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View Model Calls" })).toHaveAttribute(
+      "href",
+      "/settings/model-calls"
+    );
   });
 
   it("selects the other Mode immediately and confirms from the saved response", async () => {

@@ -175,6 +175,13 @@ export default function SettingsPage() {
           </section>
 
           <section>
+            <h2 className="text-lg font-medium">Diagnostics</h2>
+            <Link href="/settings/model-calls" className="mt-3 inline-block text-sm text-muted underline">
+              View Model Calls
+            </Link>
+          </section>
+
+          <section>
             <h2 className="text-lg font-medium">Weekly Time Budget</h2>
             <form onSubmit={submitBudgets} className="mt-3 flex flex-col gap-4">
               <div className="grid gap-4 sm:grid-cols-2">

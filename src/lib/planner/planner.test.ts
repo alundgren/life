@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDbClient, getDb, resetDb, setDb } from "@/lib/db/client";
 import { runMigrations } from "@/lib/db/migrate";
+import { createModelCall, listRecentModelCalls } from "@/lib/db/modelCall";
+import { setModelCallRecorder } from "@/lib/ollama/client";
 import {
   getCompletionById,
   getLatestCompletionDatesByTask,
@@ -18,14 +20,20 @@ import { createFlexibleTask, createScheduledTask, getTaskById } from "@/lib/db/t
 import { setTimeBudget } from "@/lib/db/timeBudget";
 import { createWeeklyPlanWithActivities, getWeeklyPlanByWeek } from "@/lib/db/weeklyPlan";
 
-vi.mock("@/lib/ollama/client", () => ({
-  callOllama: vi.fn(),
-}));
-
-import { callOllama } from "@/lib/ollama/client";
 import { getPlannerStatus, runPlannerOnce, startPlanner, stopPlanner } from "./planner";
 
-const callOllamaMock = vi.mocked(callOllama);
+// Planner tests use the real Ollama wrapper and stub its HTTP boundary instead of replacing it.
+// This keeps every Planner path on the Model Call recording seam.
+const callOllamaMock = vi.fn();
+const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+  const response = await callOllamaMock(input, init);
+  return { ok: true, json: async () => ({ response }) } as Response;
+});
+
+function promptAt(index: number): string {
+  const body = callOllamaMock.mock.calls[index][1]?.body as string;
+  return (JSON.parse(body) as { prompt: string }).prompt;
+}
 
 function seedDb() {
   vi.stubEnv("SQLITE_DB_PATH", "/tmp/unused.db");
@@ -34,7 +42,10 @@ function seedDb() {
   const db = createDbClient(":memory:");
   runMigrations(db);
   setDb(db);
+  setModelCallRecorder(createModelCall);
   callOllamaMock.mockReset();
+  fetchMock.mockClear();
+  vi.stubGlobal("fetch", fetchMock);
 }
 
 // These cover start/stop/interval only. A Flexible Task keeps each tick on the Ollama path, and
@@ -317,16 +328,35 @@ describe("weekly plan generation", () => {
 
     await runPlannerOnce();
 
-    expect(callOllamaMock).toHaveBeenCalledWith(expect.any(String), {
-      host: "http://localhost:11434",
-      model: "test-model",
-      format: "json",
-    });
+    expect(callOllamaMock).toHaveBeenCalledWith(
+      "http://localhost:11434/api/generate",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"model":"test-model"'),
+      })
+    );
 
-    const prompt = callOllamaMock.mock.calls[0][0];
+    const prompt = promptAt(0);
     expect(prompt).toContain(WEEK_START);
     expect(prompt).toContain("2026-08-02");
     expect(getWeeklyPlanByWeek(WEEK_START)).toBeUndefined();
+  });
+
+  it("records the generated plan response with its usable outcome", async () => {
+    const laundry = createLaundry();
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({ activities: [{ taskId: laundry.id, date: "2026-07-30" }] })
+    );
+
+    await runPlannerOnce();
+
+    expect(listRecentModelCalls()).toMatchObject([
+      {
+        kind: "plan-generation",
+        status: "ok",
+        outcome: "1 proposed; 0 dropped as unknown Task, 0 dropped outside the week, 0 duplicates dropped; 0 deferred for the Time Budget; 1 planned.",
+      },
+    ]);
   });
 
   it("tells Ollama the Mode's busy hours and the week's immovable Scheduled placements", async () => {
@@ -338,7 +368,7 @@ describe("weekly plan generation", () => {
 
     await runPlannerOnce();
 
-    const prompt = callOllamaMock.mock.calls[0][0];
+    const prompt = promptAt(0);
     expect(prompt).toContain("work");
     expect(prompt).toContain("assumed-busy hours: Mon-Fri 09:00-17:00");
     expect(prompt).toContain("600 minutes");
@@ -364,7 +394,7 @@ describe("weekly plan generation", () => {
 
     await runPlannerOnce();
 
-    const prompt = callOllamaMock.mock.calls[0][0];
+    const prompt = promptAt(0);
     expect(prompt).toContain("last completed 2026-07-20");
     expect(prompt).toContain("never completed");
   });
@@ -583,7 +613,9 @@ describe("weekly plan generation", () => {
     expect(listPlannedActivitiesForPlan(lastWeek.id)).toHaveLength(1);
     const status = getPlannerStatus();
     expect(status.lastStatus).toBe("error");
-    expect(status.lastResult).toBe("connection refused");
+    expect(status.lastResult).toBe(
+      "Ollama request to http://localhost:11434 failed: Error: connection refused"
+    );
   });
 
   it("skips a week that already has a Weekly Plan without calling Ollama", async () => {
@@ -654,9 +686,9 @@ describe("weekly plan generation", () => {
       [future.taskId, future.date, "done"],
       [cleaning.id, "2026-07-31", "pending"],
     ]);
-    expect(callOllamaMock.mock.calls[1][0]).toContain("Today is 2026-07-29");
-    expect(callOllamaMock.mock.calls[1][0]).toContain("Finished early");
-    expect(callOllamaMock.mock.calls[1][0]).toContain("2026-07-28 | pending");
+    expect(promptAt(1)).toContain("Today is 2026-07-29");
+    expect(promptAt(1)).toContain("Finished early");
+    expect(promptAt(1)).toContain("2026-07-28 | pending");
     expect(getPlannerStatus().lastResult).toContain("Revised week 2026-07-27");
   });
 
@@ -721,7 +753,7 @@ describe("weekly plan generation", () => {
 
     await runPlannerOnce();
 
-    expect(callOllamaMock.mock.calls[0][0]).toContain("Wash bedding and towels");
+    expect(promptAt(0)).toContain("Wash bedding and towels");
     expect(listPlannedActivitiesForPlan(plan.id).map((activity) => activity.date)).toEqual(["2026-07-31"]);
   });
 
@@ -764,7 +796,7 @@ describe("weekly plan generation", () => {
     ]);
     expect(getCompletionById(completion.id)?.processedAt).toBeDefined();
     expect(callOllamaMock).toHaveBeenCalledTimes(2);
-    expect(callOllamaMock.mock.calls[1][0]).toContain("Vacuum the big rug for about an hour");
+    expect(promptAt(1)).toContain("Vacuum the big rug for about an hour");
     expect(getPlannerStatus().lastResult).toBe(
       "1 Correction applied. Planned week 2026-07-27: 0 Scheduled and 1 model-placed Planned Activities."
     );
@@ -886,7 +918,7 @@ describe("weekly plan generation", () => {
     expect(listPlannedActivitiesForPlan(plan.id).map((activity) => activity.date)).toEqual([
       "2026-07-31",
     ]);
-    expect(callOllamaMock.mock.calls[1][0]).toContain("Vacuum the big rug for about an hour");
+    expect(promptAt(1)).toContain("Vacuum the big rug for about an hour");
     expect(getPlannerStatus().lastResult).toContain("1 Correction applied. Revised week 2026-07-27");
   });
 
@@ -912,7 +944,7 @@ describe("weekly plan generation", () => {
     expect(getCompletionById(completions[1].id)).toBeUndefined();
     expect(getCompletionById(completions[2].id)).toBeDefined();
     expect(getLatestCompletionDatesByTask().get(laundry.id)).toBe("2026-06-12");
-    expect(callOllamaMock.mock.calls[0][0]).toContain("Note 1");
+    expect(promptAt(0)).toContain("Note 1");
     expect(getPlannerStatus().lastResult).toContain("1 Task was compacted; 2 Completions were folded");
   });
 
@@ -977,7 +1009,7 @@ describe("weekly plan generation", () => {
 
     await runPlannerOnce();
 
-    expect(callOllamaMock.mock.calls[0][0]).toContain("Often takes longer than expected.");
+    expect(promptAt(0)).toContain("Often takes longer than expected.");
     const plan = createWeeklyPlanWithActivities(WEEK_START, [
       { taskId: laundry.id, date: "2026-07-30" },
     ]);
@@ -989,6 +1021,6 @@ describe("weekly plan generation", () => {
 
     await runPlannerOnce();
 
-    expect(callOllamaMock.mock.calls[0][0]).toContain("Often takes longer than expected.");
+    expect(promptAt(0)).toContain("Often takes longer than expected.");
   });
 });
