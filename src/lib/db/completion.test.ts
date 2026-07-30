@@ -7,6 +7,7 @@ import { addPlannedActivity } from "./plannedActivity";
 import {
   getLatestCompletionDatesByTask,
   hasCompletionsSince,
+  listCompactionEligibleCompletionsByTask,
   listCompletionsForDateRange,
   listUnprocessedCompletions,
   markCompletionProcessed,
@@ -110,6 +111,34 @@ describe("completion data access", () => {
       .prepare("SELECT processed_at FROM completion WHERE id = ?")
       .get(completion.id) as { processed_at: string | null };
     expect(row.processed_at).not.toBeNull();
+  });
+
+  it("groups only processed Completions outside each Task's ten newest rows", () => {
+    const first = createFlexibleTask({
+      description: "Clean the windows",
+      frequencyText: "about every three months",
+      durationMinutes: 45,
+    });
+    const second = createFlexibleTask({
+      description: "Descale the kettle",
+      frequencyText: "twice a year",
+      durationMinutes: 20,
+    });
+    const firstCompletions = Array.from({ length: 12 }, (_, day) =>
+      recordCompletion({ taskId: first.id, completedDate: `2026-07-${String(day + 1).padStart(2, "0")}` })
+    );
+    const secondCompletions = Array.from({ length: 11 }, (_, day) =>
+      recordCompletion({ taskId: second.id, completedDate: `2026-06-${String(day + 1).padStart(2, "0")}` })
+    );
+    firstCompletions.forEach((completion) => markCompletionProcessed(completion.id));
+    secondCompletions.slice(1).forEach((completion) => markCompletionProcessed(completion.id));
+
+    const eligible = listCompactionEligibleCompletionsByTask();
+
+    expect(eligible.get(first.id)?.map((completion) => completion.id)).toEqual(
+      firstCompletions.slice(0, 2).map((completion) => completion.id)
+    );
+    expect(eligible.has(second.id)).toBe(false);
   });
 
   it("reports the most recent Completion date per Task, omitting Tasks never completed", () => {

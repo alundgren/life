@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDbClient, getDb, resetDb, setDb } from "@/lib/db/client";
 import { runMigrations } from "@/lib/db/migrate";
-import { getCompletionById, recordCompletion } from "@/lib/db/completion";
+import {
+  getCompletionById,
+  getLatestCompletionDatesByTask,
+  markCompletionProcessed,
+  recordCompletion,
+} from "@/lib/db/completion";
+import { getCompletionDigest, upsertCompletionDigest } from "@/lib/db/completionDigest";
 import { applyCorrection, listCorrections } from "@/lib/db/correction";
 import { setMode } from "@/lib/db/mode";
 import {
@@ -882,5 +888,107 @@ describe("weekly plan generation", () => {
     ]);
     expect(callOllamaMock.mock.calls[1][0]).toContain("Vacuum the big rug for about an hour");
     expect(getPlannerStatus().lastResult).toContain("1 Correction applied. Revised week 2026-07-27");
+  });
+
+  it("compacts processed Completions outside the recent window before planning", async () => {
+    const laundry = createLaundry();
+    const completions = Array.from({ length: 12 }, (_, day) => {
+      const completion = recordCompletion({
+        taskId: laundry.id,
+        completedDate: `2026-06-${String(day + 1).padStart(2, "0")}`,
+        note: `Note ${day + 1}`,
+      });
+      markCompletionProcessed(completion.id);
+      return completion;
+    });
+    callOllamaMock
+      .mockResolvedValueOnce('{"summary":"Usually done earlier in the month."}')
+      .mockResolvedValueOnce('{"activities":[]}');
+
+    await runPlannerOnce();
+
+    expect(getCompletionDigest(laundry.id)?.summary).toBe("Usually done earlier in the month.");
+    expect(getCompletionById(completions[0].id)).toBeUndefined();
+    expect(getCompletionById(completions[1].id)).toBeUndefined();
+    expect(getCompletionById(completions[2].id)).toBeDefined();
+    expect(getLatestCompletionDatesByTask().get(laundry.id)).toBe("2026-06-12");
+    expect(callOllamaMock.mock.calls[0][0]).toContain("Note 1");
+    expect(getPlannerStatus().lastResult).toContain("1 Task was compacted; 2 Completions were folded");
+  });
+
+  it("leaves an eligible Task intact when its Digest response is unusable while compacting others", async () => {
+    const failed = createLaundry();
+    const compacted = createFlexibleTask({
+      description: "Clean the windows",
+      frequencyText: "monthly",
+      durationMinutes: 30,
+    });
+    const completionsFor = (taskId: number) =>
+      Array.from({ length: 11 }, (_, day) => {
+        const completion = recordCompletion({
+          taskId,
+          completedDate: `2026-06-${String(day + 1).padStart(2, "0")}`,
+        });
+        markCompletionProcessed(completion.id);
+        return completion;
+      });
+    const failedCompletions = completionsFor(failed.id);
+    const compactedCompletions = completionsFor(compacted.id);
+    upsertCompletionDigest(failed.id, "Previous digest");
+    callOllamaMock
+      .mockResolvedValueOnce("not JSON")
+      .mockResolvedValueOnce('{"summary":"Usually a monthly task."}')
+      .mockResolvedValueOnce('{"activities":[]}');
+
+    await runPlannerOnce();
+
+    expect(getCompletionDigest(failed.id)?.summary).toBe("Previous digest");
+    expect(getCompletionById(failedCompletions[0].id)).toBeDefined();
+    expect(getCompletionDigest(compacted.id)?.summary).toBe("Usually a monthly task.");
+    expect(getCompletionById(compactedCompletions[0].id)).toBeUndefined();
+    expect(getPlannerStatus().lastResult).toContain("1 Task was compacted; 1 Completion was folded");
+  });
+
+  it("does not compact unprocessed Completions outside the recent window", async () => {
+    const laundry = createLaundry();
+    const completions = Array.from({ length: 11 }, (_, day) =>
+      recordCompletion({
+        taskId: laundry.id,
+        completedDate: `2026-06-${String(day + 1).padStart(2, "0")}`,
+        note: day === 0 ? "Needs a new detergent" : undefined,
+      })
+    );
+    completions.slice(1).forEach((completion) => markCompletionProcessed(completion.id));
+    callOllamaMock
+      .mockRejectedValueOnce(new Error("Ollama unavailable"))
+      .mockResolvedValueOnce('{"activities":[]}');
+
+    await runPlannerOnce();
+
+    expect(getCompletionDigest(laundry.id)).toBeUndefined();
+    expect(getCompletionById(completions[0].id)).toBeDefined();
+    expect(callOllamaMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("includes a Flexible Task's Completion Digest in generation and revision prompts", async () => {
+    const laundry = createLaundry();
+    upsertCompletionDigest(laundry.id, "Often takes longer than expected.");
+    callOllamaMock.mockResolvedValue('{"activities":[]}');
+
+    await runPlannerOnce();
+
+    expect(callOllamaMock.mock.calls[0][0]).toContain("Often takes longer than expected.");
+    const plan = createWeeklyPlanWithActivities(WEEK_START, [
+      { taskId: laundry.id, date: "2026-07-30" },
+    ]);
+    getDb()
+      .prepare("UPDATE weekly_plan SET revised_at = '2026-07-01 00:00:00' WHERE id = ?")
+      .run(plan.id);
+    recordCompletion({ taskId: laundry.id, completedDate: "2026-07-29" });
+    callOllamaMock.mockClear();
+
+    await runPlannerOnce();
+
+    expect(callOllamaMock.mock.calls[0][0]).toContain("Often takes longer than expected.");
   });
 });
