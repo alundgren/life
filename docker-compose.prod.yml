@@ -11,6 +11,8 @@ services:
     environment:
       SQLITE_DB_PATH: /app/data/life.db
       OLLAMA_HOST: http://ollama:11434
+      # Keep the dev-only clock disabled even when .env contains a local development setting.
+      SIMULATED_CLOCK: "false"
     volumes:
       - sqlite-data:/app/data
     depends_on:

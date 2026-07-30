@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { Task } from "@/lib/db/task";
 
 type PlannerStatus = {
@@ -11,6 +11,7 @@ type PlannerStatus = {
   lastResult: string | null;
 };
 type PlaceholderResponse = { message: string | null; planner: PlannerStatus };
+type ClockResponse = { today: string };
 type PlannedActivityForDay = {
   id: number;
   weeklyPlanId: number;
@@ -35,14 +36,6 @@ const secondaryButtonClass =
 const primaryButtonClass =
   "min-h-11 rounded-md bg-foreground px-4 py-2 text-base font-medium text-background disabled:opacity-60";
 
-function todayLocalDate(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function statusLabel(status: PlannedActivityForDay["status"]): string {
   if (status === "done") return "Done";
   if (status === "missed") return "Missed";
@@ -63,24 +56,23 @@ export default function Home() {
   const [adHocTaskId, setAdHocTaskId] = useState("");
   const [adHocNote, setAdHocNote] = useState("");
   const [savingAdHoc, setSavingAdHoc] = useState(false);
-
-  const today = useMemo(() => todayLocalDate(), []);
+  const [today, setToday] = useState<string | null>(null);
 
   async function loadActivities() {
+    if (!today) return;
     const res = await fetch(`/api/planned-activities?date=${today}`);
     if (!res.ok) throw new Error("bad status");
     setActivities((await res.json()) as PlannedActivityForDay[]);
   }
 
   useEffect(() => {
-    fetch(`/api/planned-activities?date=${today}`)
+    fetch("/api/simulated-clock")
       .then((res) => {
         if (!res.ok) throw new Error("bad status");
         return res.json();
       })
-      .then((body: PlannedActivityForDay[]) => setActivities(body))
-      .catch(() => setLoadError("Failed to load today's Planned Activities."))
-      .finally(() => setLoadingActivities(false));
+      .then((body: ClockResponse) => setToday(body.today))
+      .catch(() => setLoadError("Failed to load today's Planned Activities."));
 
     fetch("/api/tasks")
       .then((res) => {
@@ -97,6 +89,19 @@ export default function Home() {
       .catch(() => {
         // Planner heartbeat is diagnostic only; daily logging should not fail because it is absent.
       });
+  }, []);
+
+  useEffect(() => {
+    if (!today) return;
+
+    fetch(`/api/planned-activities?date=${today}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("bad status");
+        return res.json();
+      })
+      .then((body: PlannedActivityForDay[]) => setActivities(body))
+      .catch(() => setLoadError("Failed to load today's Planned Activities."))
+      .finally(() => setLoadingActivities(false));
   }, [today]);
 
   async function recordCompletion(payload: {
@@ -104,6 +109,7 @@ export default function Home() {
     plannedActivityId?: number;
     note?: string;
   }) {
+    if (!today) throw new Error("Today's date is still loading.");
     const body = {
       taskId: payload.taskId,
       completedDate: today,

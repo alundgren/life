@@ -1,4 +1,5 @@
 import type { ModelCallKind, NewModelCall } from "@/lib/db/modelCall";
+import { getCurrentTime } from "@/lib/simulatedClock";
 
 export interface OllamaConfig {
   host: string;
@@ -35,7 +36,7 @@ export async function callOllama(
   prompt: string,
   config: OllamaConfig
 ): Promise<{ response: string; modelCallId: number | undefined }> {
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   try {
     let res: Response;
     try {
@@ -64,24 +65,24 @@ export async function callOllama(
       throw new Error("Ollama response did not include response text");
     }
     const modelCallId = recordModelCall({
-      calledAt: new Date().toISOString(),
+      calledAt: getCurrentTime().toISOString(),
       kind: config.kind,
       model: config.model,
       requestText: prompt,
       responseText: data.response,
       status: "ok",
-      durationMs: Date.now() - startedAt,
+      durationMs: performance.now() - startedAt,
     });
     return { response: data.response, modelCallId };
   } catch (error) {
     recordModelCall({
-      calledAt: new Date().toISOString(),
+      calledAt: getCurrentTime().toISOString(),
       kind: config.kind,
       model: config.model,
       requestText: prompt,
       errorText: errorText(error),
       status: "error",
-      durationMs: Date.now() - startedAt,
+      durationMs: performance.now() - startedAt,
     });
     throw error;
   }

@@ -2,6 +2,7 @@ export interface Env {
   SQLITE_DB_PATH: string;
   OLLAMA_HOST: string;
   OLLAMA_MODEL: string;
+  SIMULATED_CLOCK: boolean;
 }
 
 const REQUIRED_VARS = ["SQLITE_DB_PATH", "OLLAMA_HOST", "OLLAMA_MODEL"] as const;
@@ -18,6 +19,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     SQLITE_DB_PATH: source.SQLITE_DB_PATH!,
     OLLAMA_HOST: source.OLLAMA_HOST!,
     OLLAMA_MODEL: source.OLLAMA_MODEL!,
+    SIMULATED_CLOCK: source.SIMULATED_CLOCK === "true",
   };
 }
 

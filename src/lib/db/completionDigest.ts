@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db/client";
+import { getCurrentTime } from "@/lib/simulatedClock";
 
 export interface CompletionDigest {
   taskId: number;
@@ -24,10 +25,10 @@ function rowToCompletionDigest(row: CompletionDigestRow): CompletionDigest {
 export function upsertCompletionDigest(taskId: number, summary: string): CompletionDigest {
   getDb()
     .prepare(
-      `INSERT INTO completion_digest (task_id, summary) VALUES (@taskId, @summary)
-       ON CONFLICT (task_id) DO UPDATE SET summary = excluded.summary, updated_at = datetime('now')`
+      `INSERT INTO completion_digest (task_id, summary, updated_at) VALUES (@taskId, @summary, @updatedAt)
+       ON CONFLICT (task_id) DO UPDATE SET summary = excluded.summary, updated_at = excluded.updated_at`
     )
-    .run({ taskId, summary });
+    .run({ taskId, summary, updatedAt: getCurrentTime().toISOString() });
 
   return getCompletionDigest(taskId)!;
 }
@@ -55,8 +56,8 @@ export function replaceCompletionDigestAndDeleteCompletions(
 ): CompletionDigest {
   const db = getDb();
   const upsert = db.prepare(
-    `INSERT INTO completion_digest (task_id, summary) VALUES (@taskId, @summary)
-     ON CONFLICT (task_id) DO UPDATE SET summary = excluded.summary, updated_at = datetime('now')`
+    `INSERT INTO completion_digest (task_id, summary, updated_at) VALUES (@taskId, @summary, @updatedAt)
+     ON CONFLICT (task_id) DO UPDATE SET summary = excluded.summary, updated_at = excluded.updated_at`
   );
   const deleteCompletions =
     completionIds.length === 0
@@ -68,7 +69,7 @@ export function replaceCompletionDigestAndDeleteCompletions(
         );
 
   db.transaction(() => {
-    upsert.run({ taskId, summary });
+    upsert.run({ taskId, summary, updatedAt: getCurrentTime().toISOString() });
     deleteCompletions?.run({
       taskId,
       ...Object.fromEntries(completionIds.map((id, index) => [`completionId${index}`, id])),

@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db/client";
+import { getCurrentTime } from "@/lib/simulatedClock";
 
 export interface WeeklyPlan {
   id: number;
@@ -29,9 +30,12 @@ function rowToWeeklyPlan(row: WeeklyPlanRow): WeeklyPlan {
 
 /** Creates a Weekly Plan for a given week. week_start_date is unique — one plan per week. */
 export function createWeeklyPlan(weekStartDate: string): WeeklyPlan {
+  const now = getCurrentTime().toISOString();
   getDb()
-    .prepare("INSERT INTO weekly_plan (week_start_date, revised_at) VALUES (@weekStartDate, datetime('now'))")
-    .run({ weekStartDate });
+    .prepare(
+      "INSERT INTO weekly_plan (week_start_date, created_at, updated_at, revised_at) VALUES (@weekStartDate, @createdAt, @updatedAt, @revisedAt)"
+    )
+    .run({ weekStartDate, createdAt: now, updatedAt: now, revisedAt: now });
   return getWeeklyPlanByWeek(weekStartDate)!;
 }
 
@@ -50,17 +54,18 @@ export function createWeeklyPlanWithActivities(
 ): WeeklyPlan {
   const db = getDb();
   const insertPlan = db.prepare(
-    "INSERT INTO weekly_plan (week_start_date, revised_at) VALUES (@weekStartDate, datetime('now'))"
+    "INSERT INTO weekly_plan (week_start_date, created_at, updated_at, revised_at) VALUES (@weekStartDate, @createdAt, @updatedAt, @revisedAt)"
   );
   const insertActivity = db.prepare(
-    `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status)
-     VALUES (@weeklyPlanId, @taskId, @date, 'pending')`
+    `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status, created_at)
+     VALUES (@weeklyPlanId, @taskId, @date, 'pending', @createdAt)`
   );
 
   db.transaction(() => {
-    const planId = Number(insertPlan.run({ weekStartDate }).lastInsertRowid);
+    const now = getCurrentTime().toISOString();
+    const planId = Number(insertPlan.run({ weekStartDate, createdAt: now, updatedAt: now, revisedAt: now }).lastInsertRowid);
     for (const activity of activities) {
-      insertActivity.run({ weeklyPlanId: planId, ...activity });
+      insertActivity.run({ weeklyPlanId: planId, ...activity, createdAt: now });
     }
   })();
 
@@ -84,21 +89,22 @@ export function replaceRevisablePlannedActivities(
        AND task_id IN (SELECT task_id FROM task_flexible)`
   );
   const insertActivity = db.prepare(
-    `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status)
-     VALUES (@weeklyPlanId, @taskId, @date, 'pending')`
+    `INSERT INTO planned_activity (weekly_plan_id, task_id, date, status, created_at)
+     VALUES (@weeklyPlanId, @taskId, @date, 'pending', @createdAt)`
   );
   const stampPlan = db.prepare(
     `UPDATE weekly_plan
-     SET revised_at = datetime('now'), updated_at = datetime('now')
+     SET revised_at = @revisedAt, updated_at = @updatedAt
      WHERE id = @weeklyPlanId`
   );
 
   db.transaction(() => {
+    const now = getCurrentTime().toISOString();
     deleteActivities.run({ weeklyPlanId, fromDate });
     for (const activity of activities) {
-      insertActivity.run({ weeklyPlanId, ...activity });
+      insertActivity.run({ weeklyPlanId, ...activity, createdAt: now });
     }
-    stampPlan.run({ weeklyPlanId });
+    stampPlan.run({ weeklyPlanId, revisedAt: now, updatedAt: now });
   })();
 }
 
