@@ -18,7 +18,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.13.0
-      - run: corepack enable
+      - run: npm install --global corepack@0.34.5
+      - run: corepack enable pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
@@ -30,7 +31,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.13.0
-      - run: corepack enable
+      - run: npm install --global corepack@0.34.5
+      - run: corepack enable pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
 
@@ -42,6 +44,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.13.0
-      - run: corepack enable
+      - run: npm install --global corepack@0.34.5
+      - run: corepack enable pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
