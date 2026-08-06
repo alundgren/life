@@ -26,7 +26,7 @@ services:
       context: ./docker/ollama
     # Bound to loopback so `pnpm test:integration` can reach Ollama from the host.
     # Not 0.0.0.0: Docker's published ports bypass the host firewall, and this
-    # endpoint is unauthenticated. docker-compose.prod.yml publishes nothing.
+    # endpoint is unauthenticated.
     ports:
       - "127.0.0.1:11434:11434"
     environment:
