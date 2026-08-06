@@ -20,7 +20,7 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Vendored skill docs and local Claude Code tool config, not app source
+    // Local Claude Code tool config, not app source.
     ".claude/**",
   ]),
 ]);
