@@ -52,12 +52,14 @@ const WEEKDAY_NAMES = [
 
 export interface PlannerStatus {
   running: boolean;
+  lastCheckedAt: string | null;
   lastRunAt: string | null;
   lastStatus: "ok" | "error" | null;
   lastResult: string | null;
 }
 
 let running = false;
+let runInFlight = false;
 let timer: ReturnType<typeof setInterval> | undefined;
 
 /** Starts the background Planner loop: runs immediately, then every intervalMs. */
@@ -82,12 +84,17 @@ export function stopPlanner(): void {
 }
 
 export function getPlannerStatus(): PlannerStatus {
-  const row = getDb()
+  const db = getDb();
+  const row = db
     .prepare("SELECT ran_at, status, result FROM planner_run ORDER BY id DESC LIMIT 1")
     .get() as { ran_at: string; status: string; result: string | null } | undefined;
+  const heartbeat = db
+    .prepare("SELECT last_checked_at FROM planner_heartbeat WHERE id = 1")
+    .get() as { last_checked_at: string } | undefined;
 
   return {
     running,
+    lastCheckedAt: heartbeat?.last_checked_at ?? null,
     lastRunAt: row?.ran_at ?? null,
     lastStatus: (row?.status as "ok" | "error" | undefined) ?? null,
     lastResult: row ? row.result : null,
@@ -661,17 +668,44 @@ function compactionResultSuffix(result: CompletionCompactionResult): string {
  * Completion or Correction feedback has arrived since the Planner last wrote it.
  */
 export async function runPlannerOnce(): Promise<void> {
-  const recordRun = getDb().prepare(
-    "INSERT INTO planner_run (ran_at, status, result) VALUES (@ranAt, @status, @result)"
-  );
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO planner_heartbeat (id, last_checked_at) VALUES (1, @lastCheckedAt)
+     ON CONFLICT(id) DO UPDATE SET last_checked_at = excluded.last_checked_at`
+  ).run({ lastCheckedAt: getCurrentTime().toISOString() });
+
+  if (runInFlight) {
+    return;
+  }
+
+  runInFlight = true;
+  const recordRun = db.transaction((ranAt: string, status: "ok" | "error", result: string) => {
+    db.prepare("INSERT INTO planner_run (ran_at, status, result) VALUES (@ranAt, @status, @result)").run({
+      ranAt,
+      status,
+      result,
+    });
+    db.prepare(
+      "DELETE FROM planner_run WHERE id NOT IN (SELECT id FROM planner_run ORDER BY id DESC LIMIT 500)"
+    ).run();
+  });
   let extraction: CorrectionExtractionResult = { applied: 0, failedTasks: 0, hadNotes: false };
   let compaction: CompletionCompactionResult = { tasksCompacted: 0, completionsFolded: 0 };
-  const recordResult = (status: "ok" | "error", result: string) =>
-    recordRun.run({
-      ranAt: getCurrentTime().toISOString(),
+  const recordResult = (status: "ok" | "error", result: string, planChanged = false) => {
+    if (
+      status === "ok" &&
+      extraction.applied === 0 &&
+      compaction.tasksCompacted === 0 &&
+      !planChanged
+    ) {
+      return;
+    }
+    recordRun(
+      getCurrentTime().toISOString(),
       status,
-      result: `${extractionResultPrefix(extraction)}${result}${compactionResultSuffix(compaction)}`,
-    });
+      `${extractionResultPrefix(extraction)}${result}${compactionResultSuffix(compaction)}`
+    );
+  };
 
   try {
     const now = getCurrentTime();
@@ -708,7 +742,8 @@ export async function runPlannerOnce(): Promise<void> {
       );
       recordResult(
         "ok",
-        `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and 0 model-placed Planned Activities.`
+        `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and 0 model-placed Planned Activities.`,
+        true
       );
       return;
     }
@@ -799,7 +834,8 @@ export async function runPlannerOnce(): Promise<void> {
         "ok",
         `Revised week ${weekStart} from ${today}: ${activities.length} Planned ${
           activities.length === 1 ? "Activity" : "Activities"
-        }.${deferredResultSuffix(deferred)}`
+        }.${deferredResultSuffix(deferred)}`,
+        true
       );
       return;
     }
@@ -809,7 +845,8 @@ export async function runPlannerOnce(): Promise<void> {
       attachOutcome(modelCallId, planOutcome(parsedActivities, deferred, 0));
       recordResult(
         "ok",
-        `Week ${weekStart} has nothing due.${deferredResultSuffix(deferred)}`
+        `Week ${weekStart} has nothing due.${deferredResultSuffix(deferred)}`,
+        true
       );
       return;
     }
@@ -818,9 +855,12 @@ export async function runPlannerOnce(): Promise<void> {
     attachOutcome(modelCallId, planOutcome(parsedActivities, deferred, activities.length));
     recordResult(
       "ok",
-      `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and ${activities.length} model-placed Planned Activities.${deferredResultSuffix(deferred)}`
+      `Planned week ${weekStart}: ${fixedPlacements.length} Scheduled and ${activities.length} model-placed Planned Activities.${deferredResultSuffix(deferred)}`,
+      true
     );
   } catch (error) {
     recordResult("error", error instanceof Error ? error.message : String(error));
+  } finally {
+    runInFlight = false;
   }
 }

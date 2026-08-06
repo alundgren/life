@@ -64,6 +64,7 @@ describe("planner lifecycle", () => {
   it("starts stopped with no recorded runs", () => {
     expect(getPlannerStatus()).toEqual({
       running: false,
+      lastCheckedAt: null,
       lastRunAt: null,
       lastStatus: null,
       lastResult: null,
@@ -118,6 +119,36 @@ describe("planner lifecycle", () => {
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(callOllamaMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("updates the heartbeat without recording a no-effect tick", async () => {
+    await runPlannerOnce();
+
+    expect(getPlannerStatus()).toMatchObject({
+      lastCheckedAt: expect.any(String),
+      lastRunAt: null,
+      lastStatus: null,
+      lastResult: null,
+    });
+    expect((getDb().prepare("SELECT COUNT(*) AS count FROM planner_run").get() as { count: number }).count).toBe(0);
+  });
+
+  it("skips a tick while a Planner run is in flight", async () => {
+    createFlexibleTask({ description: "Do the laundry", frequencyText: "weekly", durationMinutes: 15 });
+    let resolveResponse!: (response: string) => void;
+    callOllamaMock.mockImplementation(
+      () => new Promise<string>((resolve) => {
+        resolveResponse = resolve;
+      })
+    );
+
+    const firstRun = runPlannerOnce();
+    await vi.waitFor(() => expect(callOllamaMock).toHaveBeenCalledTimes(1));
+    await expect(runPlannerOnce()).resolves.toBeUndefined();
+
+    expect(callOllamaMock).toHaveBeenCalledTimes(1);
+    resolveResponse('{"activities":[]}');
+    await firstRun;
   });
 });
 
@@ -646,6 +677,9 @@ describe("weekly plan generation", () => {
 
     await runPlannerOnce();
     const planned = listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id);
+    const previousStatus = getPlannerStatus();
+    const nextTick = new Date(2026, 6, 29, 12, 1, 0);
+    vi.setSystemTime(nextTick);
 
     await runPlannerOnce();
 
@@ -653,7 +687,29 @@ describe("weekly plan generation", () => {
     expect(listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id)).toEqual(planned);
     const status = getPlannerStatus();
     expect(status.lastStatus).toBe("ok");
-    expect(status.lastResult).toBe("Week 2026-07-27 already planned.");
+    expect(status.lastResult).toBe(previousStatus.lastResult);
+    expect(status.lastRunAt).toBe(previousStatus.lastRunAt);
+    expect(status.lastCheckedAt).toBe(nextTick.toISOString());
+  });
+
+  it("keeps only the 500 most recent effectful Planner runs", async () => {
+    const insertRun = getDb().prepare(
+      "INSERT INTO planner_run (ran_at, status, result) VALUES (@ranAt, 'ok', 'earlier run')"
+    );
+    for (let index = 0; index < 500; index++) {
+      insertRun.run({ ranAt: `2026-07-01T00:00:${String(index % 60).padStart(2, "0")}.000Z` });
+    }
+    createLaundry();
+    callOllamaMock.mockRejectedValue(new Error("connection refused"));
+
+    await runPlannerOnce();
+
+    const runs = getDb()
+      .prepare("SELECT id FROM planner_run ORDER BY id")
+      .all() as { id: number }[];
+    expect(runs).toHaveLength(500);
+    expect(runs[0].id).toBe(2);
+    expect(runs.at(-1)?.id).toBe(501);
   });
 
   it("does not throw when no Tasks are defined", async () => {
