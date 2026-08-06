@@ -64,6 +64,7 @@ describe("planner lifecycle", () => {
   it("starts stopped with no recorded runs", () => {
     expect(getPlannerStatus()).toEqual({
       running: false,
+      lastCheckedAt: null,
       lastRunAt: null,
       lastStatus: null,
       lastResult: null,
@@ -118,6 +119,46 @@ describe("planner lifecycle", () => {
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(callOllamaMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("updates the heartbeat without recording a no-effect tick", async () => {
+    await runPlannerOnce();
+
+    expect(getPlannerStatus()).toMatchObject({
+      lastCheckedAt: expect.any(String),
+      lastRunAt: null,
+      lastStatus: null,
+      lastResult: null,
+    });
+    expect((getDb().prepare("SELECT COUNT(*) AS count FROM planner_run").get() as { count: number }).count).toBe(0);
+  });
+
+  it("skips a tick while a Planner run is in flight but still advances the heartbeat", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 29, 12, 0, 0));
+    createFlexibleTask({ description: "Do the laundry", frequencyText: "weekly", durationMinutes: 15 });
+    let resolveResponse!: (response: string) => void;
+    callOllamaMock.mockImplementation(
+      () => new Promise<string>((resolve) => {
+        resolveResponse = resolve;
+      })
+    );
+
+    const firstRun = runPlannerOnce();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(callOllamaMock).toHaveBeenCalledTimes(1);
+
+    const skippedTickAt = new Date(2026, 6, 29, 12, 15, 0);
+    vi.setSystemTime(skippedTickAt);
+    await expect(runPlannerOnce()).resolves.toBeUndefined();
+
+    expect(callOllamaMock).toHaveBeenCalledTimes(1);
+    expect(getPlannerStatus()).toMatchObject({
+      lastCheckedAt: skippedTickAt.toISOString(),
+      lastRunAt: null,
+    });
+    resolveResponse('{"activities":[]}');
+    await firstRun;
   });
 });
 
@@ -570,7 +611,8 @@ describe("weekly plan generation", () => {
 
     await runPlannerOnce();
     expect(getWeeklyPlanByWeek(WEEK_START)).toBeUndefined();
-    expect(getPlannerStatus().lastResult).toContain("1 model-proposed Planned Activity was deferred");
+    // Deferring everything writes no plan, so the run isn't recorded; the Model Call carries the outcome.
+    expect(listRecentModelCalls()[0].outcome).toContain("1 deferred for the Time Budget");
 
     setMode("vacation");
     await runPlannerOnce();
@@ -646,6 +688,9 @@ describe("weekly plan generation", () => {
 
     await runPlannerOnce();
     const planned = listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id);
+    const previousStatus = getPlannerStatus();
+    const nextTick = new Date(2026, 6, 29, 12, 1, 0);
+    vi.setSystemTime(nextTick);
 
     await runPlannerOnce();
 
@@ -653,7 +698,29 @@ describe("weekly plan generation", () => {
     expect(listPlannedActivitiesForPlan(getWeeklyPlanByWeek(WEEK_START)!.id)).toEqual(planned);
     const status = getPlannerStatus();
     expect(status.lastStatus).toBe("ok");
-    expect(status.lastResult).toBe("Week 2026-07-27 already planned.");
+    expect(status.lastResult).toBe(previousStatus.lastResult);
+    expect(status.lastRunAt).toBe(previousStatus.lastRunAt);
+    expect(status.lastCheckedAt).toBe(nextTick.toISOString());
+  });
+
+  it("keeps only the 500 most recent effectful Planner runs", async () => {
+    const insertRun = getDb().prepare(
+      "INSERT INTO planner_run (ran_at, status, result) VALUES (@ranAt, 'ok', 'earlier run')"
+    );
+    for (let index = 0; index < 500; index++) {
+      insertRun.run({ ranAt: `2026-07-01T00:00:${String(index % 60).padStart(2, "0")}.000Z` });
+    }
+    createLaundry();
+    callOllamaMock.mockRejectedValue(new Error("connection refused"));
+
+    await runPlannerOnce();
+
+    const runs = getDb()
+      .prepare("SELECT id FROM planner_run ORDER BY id")
+      .all() as { id: number }[];
+    expect(runs).toHaveLength(500);
+    expect(runs[0].id).toBe(2);
+    expect(runs.at(-1)?.id).toBe(501);
   });
 
   it("does not throw when no Tasks are defined", async () => {
@@ -876,7 +943,8 @@ describe("weekly plan generation", () => {
 
     expect(getCompletionById(completion.id)?.processedAt).toBeDefined();
     expect(callOllamaMock).toHaveBeenCalledTimes(1);
-    expect(getPlannerStatus().lastResult).toBe("Week 2026-07-27 has nothing due.");
+    // A week with nothing due writes nothing, so the tick isn't recorded as a Planner run.
+    expect(getPlannerStatus().lastResult).toBeNull();
   });
 
   it("retries only the Task whose extraction failed while still planning", async () => {
@@ -906,9 +974,8 @@ describe("weekly plan generation", () => {
     expect(getCompletionById(failedCompletion.id)?.processedAt).toBeUndefined();
     expect(getCompletionById(processedCompletion.id)?.processedAt).toBeDefined();
     expect(getWeeklyPlanByWeek(WEEK_START)).toBeUndefined();
-    expect(getPlannerStatus().lastResult).toBe(
-      "0 Corrections applied. 1 Task was deferred after extraction failure. Week 2026-07-27 has nothing due."
-    );
+    // No Correction applied and nothing due, so the tick had no effect to record.
+    expect(getPlannerStatus().lastResult).toBeNull();
   });
 
   it("revises an already-planned week when extraction applies a Correction", async () => {

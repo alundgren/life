@@ -3,13 +3,16 @@ import { createDbClient } from "./client";
 import { runMigrations } from "./migrate";
 
 describe("runMigrations", () => {
-  it("applies the initial schema to a fresh database and records it", () => {
+  it("applies the schema migrations to a fresh database and records them", () => {
     const db = createDbClient(":memory:");
 
     runMigrations(db);
 
     const applied = db.prepare("SELECT filename FROM schema_migrations").all();
-    expect(applied).toEqual([{ filename: "0001_initial_schema.sql" }]);
+    expect(applied).toEqual([
+      { filename: "0001_initial_schema.sql" },
+      { filename: "0002_planner_heartbeat.sql" },
+    ]);
 
     const budgets = db.prepare("SELECT mode, weekly_minutes FROM time_budget ORDER BY mode").all();
     expect(budgets).toEqual([
