@@ -41,6 +41,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   };
 }
 
+// Likely re-validated per module instance (see ADR 0009); not yet confirmed safe or fixed, tracked in #98.
+// eslint-disable-next-line no-restricted-syntax
 let cachedEnv: Env | undefined;
 
 export function getEnv(): Env {

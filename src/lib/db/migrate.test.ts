@@ -12,6 +12,7 @@ describe("runMigrations", () => {
     expect(applied).toEqual([
       { filename: "0001_initial_schema.sql" },
       { filename: "0002_planner_heartbeat.sql" },
+      { filename: "0003_planner_lock.sql" },
     ]);
 
     const budgets = db.prepare("SELECT mode, weekly_minutes FROM time_budget ORDER BY mode").all();
