@@ -21,6 +21,7 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS builder
 
 WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
 COPY . .
 RUN pnpm build
 
@@ -29,6 +30,7 @@ FROM node:24-trixie-slim@sha256:0711b541c1c33a8a530ac4f0d391baa9a15b3d804695b1b2
 
 WORKDIR /app
 ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
