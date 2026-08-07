@@ -5,11 +5,11 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
-    env_file:
-      - .env
     environment:
       SQLITE_DB_PATH: /app/data/life.db
       OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: qwen2.5:3b
+      APP_TIME_ZONE: Europe/Stockholm
       SIMULATED_CLOCK: "true"
       WATCHPACK_POLLING: "true"
     volumes:
@@ -30,7 +30,7 @@ services:
     ports:
       - "127.0.0.1:11434:11434"
     environment:
-      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      OLLAMA_MODEL: qwen2.5:3b
     volumes:
       - ollama-data:/root/.ollama
     healthcheck:
