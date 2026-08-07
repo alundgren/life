@@ -43,6 +43,10 @@ pnpm test    # must exit 0
 - Each Planner run first attempts Correction extraction and Completion compaction — both run unconditionally and call Ollama whenever there's unprocessed data — then generates the current week's Weekly Plan if that week has none yet: it prompts Ollama for JSON, drops entries naming an unknown Task or a date outside the week, and writes the plan and its Planned Activities in one transaction. A week that is already planned skips only this plan-generation/revision call — extraction and compaction above still run and may call Ollama regardless.
 - A Planner run is recorded in the `planner_run` table (`ran_at`/`status`/`result`, `result` summarising what the run did) only when it had real effect — a Correction applied, Completions compacted, or plan generation/revision did more than its no-op early-return. Every other tick, including one skipped because a previous run is still in-flight, only advances a separate `lastCheckedAt` heartbeat. `planner_run` is capped at 500 rows, trimmed on insert, so a persistent Ollama outage (which makes every tick error, and error is effect) can't grow it unbounded. Both are surfaced through the placeholder API/page. See ADR 0005.
 
+## Node version
+
+One version everywhere: `.nvmrc` (24.19.0) is the source of truth, CI reads it via `node-version-file`, and both Dockerfiles pin the `node:24-trixie-slim` image that ships it. Two constraints make this exact rather than a floating range — `better-sqlite3` needs Node-API v10 (Node 22.14+, so Node 22.13 cannot load it at all), and its prebuilt binaries need GLIBC 2.38, which Debian bookworm (2.36) does not have and trixie (2.41) does. Bump all three files together.
+
 ## Docker Compose (local dev)
 
 - `docker-compose.yml` runs the app alongside a real Ollama container so the Planner exercises the actual Ollama path. See the README's "Local development (with Docker Compose)" section for usage.
@@ -54,6 +58,7 @@ pnpm test    # must exit 0
 - Piploy builds `Dockerfile.prod` from the repository's protected `main` branch and manages Life as one container; production does not use Docker Compose.
 - `Dockerfile.prod` is a multi-stage build producing a Next.js standalone server (`next.config.ts`'s `output: "standalone"`); it builds for whatever architecture Docker reports, so the same file works for `arm64` (the Pi) and `amd64` (local verification).
 - SQLite lives in a Piploy-managed bind volume mounted at `/app/data`, so it survives container replacement.
+- Piploy refuses to build a Dockerfile whose external `FROM`/`COPY --from` references are not pinned to a SHA-256 digest of a Docker Official Image (Piploy ADR 0004), so both Dockerfiles pin `node:24-trixie-slim` by its multi-arch manifest digest. Piploy never advances a digest itself — bump it in a reviewed commit, together with `.nvmrc`.
 - Ollama runs directly on the Pi under systemd and is reached through the Docker bridge. Installing the model, ordering the service after Docker, and configuring its restart and resource limits are host responsibilities.
 - `docker-compose.yml` remains the supported complete app + Ollama stack for local development.
 
