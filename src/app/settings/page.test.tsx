@@ -251,7 +251,35 @@ describe("Settings page", () => {
     await user.click(await screen.findByRole("button", { name: "Run planner now" }));
 
     expect(await screen.findByText("Planner run finished.")).toBeInTheDocument();
-    expect(fetchMock.mock.calls).toContainEqual(["/api/planner/run", { method: "POST" }]);
+    expect(fetchMock.mock.calls).toContainEqual([
+      "/api/planner/run",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ force: false }),
+      },
+    ]);
+  });
+
+  it("sends force: true when the force-replan checkbox is checked", async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = stubFetch(initialSettings);
+    render(<SettingsPage />);
+
+    await user.click(
+      await screen.findByRole("checkbox", { name: "Force replan even if this week is already planned" })
+    );
+    await user.click(await screen.findByRole("button", { name: "Run planner now" }));
+
+    expect(await screen.findByText("Planner run finished.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls).toContainEqual([
+      "/api/planner/run",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ force: true }),
+      },
+    ]);
   });
 
   it("shows a clear message when the Planner is already running", async () => {

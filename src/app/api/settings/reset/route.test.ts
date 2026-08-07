@@ -88,7 +88,9 @@ describe("POST /api/settings/reset", () => {
         })
     );
 
-    const plannerRun = runPlanner();
+    const plannerRun = runPlanner(
+      new Request("http://localhost/api/planner/run", { method: "POST" })
+    );
     await vi.waitFor(() => expect(callOllamaMock).toHaveBeenCalledTimes(1));
 
     const response = await POST(resetRequest({ confirm: "reset" }));

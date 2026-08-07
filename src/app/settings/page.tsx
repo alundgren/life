@@ -65,6 +65,7 @@ export default function SettingsPage() {
   const [savingBudgets, setSavingBudgets] = useState(false);
   const [clockAction, setClockAction] = useState<"advance" | null>(null);
   const [plannerRunning, setPlannerRunning] = useState(false);
+  const [forceReplan, setForceReplan] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState("");
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -172,7 +173,11 @@ export default function SettingsPage() {
     setMessage(null);
     setPlannerRunning(true);
     try {
-      const response = await fetch("/api/planner/run", { method: "POST" });
+      const response = await fetch("/api/planner/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ force: forceReplan }),
+      });
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "Failed to run the Planner.");
@@ -304,6 +309,15 @@ export default function SettingsPage() {
             <p className="mt-3 text-sm text-muted">
               Triggers a Planner run immediately, outside its normal 15-minute schedule.
             </p>
+            <label className="mt-3 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={forceReplan}
+                onChange={(e) => setForceReplan(e.target.checked)}
+                disabled={anyActionInFlight}
+              />
+              Force replan even if this week is already planned
+            </label>
             <div className="mt-3">
               <button
                 type="button"
