@@ -4,8 +4,10 @@ See [CONTEXT.md](CONTEXT.md) for the domain glossary and `docs/adr/` for archite
 
 ## Prerequisites
 
-- Node.js >= 22.13.0
+- Node.js >= 24.0.0 — `.nvmrc` pins the exact version (24.19.0) that CI and both Dockerfiles use
 - pnpm >= 11.1.2 (`corepack enable` will provide the version pinned in `package.json`)
+
+Use the version in `.nvmrc`. It is exact, not a floor, because `better-sqlite3` needs Node-API v10 (Node 22.14+) and its prebuilt binaries need GLIBC 2.38 — which is why both Dockerfiles are on Debian trixie rather than bookworm. When bumping Node, update `.nvmrc`, `Dockerfile`, and `Dockerfile.prod` (including their pinned base-image digests) in the same change.
 
 ## Local development (without Docker)
 

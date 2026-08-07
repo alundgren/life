@@ -1,4 +1,5 @@
-FROM node:22-bookworm-slim
+# Node 24.19.0. Keep this digest, `.nvmrc`, and `Dockerfile.prod` in step.
+FROM node:24-trixie-slim@sha256:0711b541c1c33a8a530ac4f0d391baa9a15b3d804695b1b24a47daa5fb60e74d
 
 # Build tools as a fallback in case better-sqlite3 has no prebuilt binary
 # for the container's platform and must compile from source.
