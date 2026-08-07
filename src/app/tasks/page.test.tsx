@@ -111,6 +111,32 @@ describe("Tasks page", () => {
     expect(await screen.findByText("Morning run")).toBeInTheDocument();
   });
 
+  it("submits 24-hour times typed as digits", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch();
+    render(<TasksPage />);
+
+    const startTime = screen.getByLabelText("Start time");
+    const endTime = screen.getByLabelText("End time");
+    await user.clear(startTime);
+    await user.type(startTime, "1600");
+    await user.clear(endTime);
+    await user.type(endTime, "1730");
+    await user.type(screen.getByLabelText("Description"), "Morning run");
+
+    expect(startTime).toHaveValue("16:00");
+    expect(endTime).toHaveValue("17:30");
+    expect(startTime).not.toHaveValue(expect.stringMatching(/AM|PM/));
+    expect(endTime).not.toHaveValue(expect.stringMatching(/AM|PM/));
+
+    await user.click(screen.getByRole("button", { name: "Add Task" }));
+    await screen.findByText("Task created.");
+
+    const postCall = fetchMock.mock.calls.find((c) => (c[1]?.method ?? "GET") === "POST");
+    const sent = JSON.parse(postCall![1]!.body as string);
+    expect(sent).toMatchObject({ startTime: "16:00", endTime: "17:30" });
+  });
+
   it("blocks submission and shows an error when the description is blank", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch();
@@ -132,10 +158,16 @@ describe("Tasks page", () => {
     expect(screen.getByRole("heading", { name: "Edit Task" })).toBeInTheDocument();
     expect(screen.getByLabelText("Description")).toHaveValue("Strength training");
     expect(screen.getByLabelText("Weekday")).toHaveValue("2");
+    expect(screen.getByLabelText("Start time")).toHaveValue("16:00");
+    expect(screen.getByLabelText("End time")).toHaveValue("19:00");
     expect(screen.getByLabelText("Kind")).toBeDisabled();
 
     await user.clear(screen.getByLabelText("Description"));
     await user.type(screen.getByLabelText("Description"), "Renamed training");
+    await user.clear(screen.getByLabelText("Start time"));
+    await user.type(screen.getByLabelText("Start time"), "1700");
+    await user.clear(screen.getByLabelText("End time"));
+    await user.type(screen.getByLabelText("End time"), "1830");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
     await screen.findByText("Task saved.");
@@ -144,7 +176,46 @@ describe("Tasks page", () => {
     expect(putCall).toBeDefined();
     expect(putCall![0]).toBe("/api/tasks/1");
     const sent = JSON.parse(putCall![1]!.body as string);
-    expect(sent).toMatchObject({ kind: "scheduled", description: "Renamed training" });
+    expect(sent).toMatchObject({
+      kind: "scheduled",
+      description: "Renamed training",
+      startTime: "17:00",
+      endTime: "18:30",
+    });
+  });
+
+  it("keeps invalid time validation unchanged", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch();
+    render(<TasksPage />);
+
+    const startTime = screen.getByLabelText("Start time");
+    await user.clear(startTime);
+    await user.type(startTime, "2500");
+    await user.type(screen.getByLabelText("Description"), "Morning run");
+    await user.click(screen.getByRole("button", { name: "Add Task" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Start and end times must be valid HH:MM times."
+    );
+    expect(fetchMock.mock.calls.some((c) => (c[1]?.method ?? "GET") === "POST")).toBe(false);
+  });
+
+  it("rejects malformed time text", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch();
+    render(<TasksPage />);
+
+    const startTime = screen.getByLabelText("Start time");
+    await user.clear(startTime);
+    await user.type(startTime, "16-00");
+    await user.type(screen.getByLabelText("Description"), "Morning run");
+    await user.click(screen.getByRole("button", { name: "Add Task" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Start and end times must be valid HH:MM times."
+    );
+    expect(fetchMock.mock.calls.some((c) => (c[1]?.method ?? "GET") === "POST")).toBe(false);
   });
 
   it("renders both kinds with their kind-appropriate fields", async () => {

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import type { ModelCall, ModelCallPreview } from "@/lib/db/modelCall";
 
 function timestamp(value: string, timeZone: string): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", timeZone }).format(
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", timeZone, hourCycle: "h23" }).format(
     new Date(value)
   );
 }
