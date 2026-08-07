@@ -6,6 +6,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    maxWorkers: 2,
     env: {
       APP_TIME_ZONE: "Europe/Stockholm",
     },
