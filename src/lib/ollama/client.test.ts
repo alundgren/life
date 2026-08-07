@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDbClient, resetDb, setDb } from "@/lib/db/client";
 import { runMigrations } from "@/lib/db/migrate";
 import { createModelCall, getModelCallById, listRecentModelCalls } from "@/lib/db/modelCall";
+import type { NewModelCall } from "@/lib/db/modelCall";
 import { callOllama, setModelCallRecorder } from "./client";
 
 const config = {
@@ -151,6 +152,28 @@ describe("callOllama", () => {
     expect(calls).toHaveLength(100);
     expect(calls[0].requestPreview).toBe("prompt 100");
     expect(calls.at(-1)?.requestPreview).toBe("prompt 1");
+  });
+
+  it("shares the recorder across separate module instances, as Next.js gives the instrumentation hook and route handlers", async () => {
+    // Simulates production: instrumentation.node.ts and an API route each get their own bundled
+    // copy of this module, so a plain module-level variable set by one is invisible to the other.
+    const recorded: NewModelCall[] = [];
+
+    vi.resetModules();
+    const instrumentationInstance = await import("./client");
+    instrumentationInstance.setModelCallRecorder((call) => {
+      recorded.push(call);
+      return 1;
+    });
+
+    vi.resetModules();
+    const routeHandlerInstance = await import("./client");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("pong")));
+
+    const result = await routeHandlerInstance.callOllama("ping", config);
+
+    expect(result.modelCallId).toBe(1);
+    expect(recorded).toMatchObject([{ requestText: "ping", responseText: "pong", status: "ok" }]);
   });
 
   it("keeps the Ollama request working when the recorder fails", async () => {
