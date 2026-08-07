@@ -76,5 +76,5 @@ RUN_OLLAMA_INTEGRATION_TESTS=1 pnpm test:integration
 - **Vitest does not read `.env`.** The suite falls back to `http://localhost:11434` and `qwen2.5:3b`; pass `OLLAMA_HOST` / `OLLAMA_MODEL` on the command line if yours differ.
 - Ollama must be reachable from the host with the model already pulled. `docker compose up` covers both — the `ollama` service publishes `127.0.0.1:11434`, and pulls `OLLAMA_MODEL` before reporting healthy. Running `ollama serve` natively works too.
 - `curl http://localhost:11434/api/tags` is the quickest check: it lists the pulled models, and a connection error there means the suite will fail the same way.
-- A cold model load can be slow, so the first call may approach the 180s timeout; the `curl` above warms it.
+- A cold model load can be slow, so the first call may approach the Ollama client's 180-second deadline; the `curl` above warms it.
 - `Ollama returned no usable Planned Activities …` means Ollama answered but the model's JSON didn't survive validation — that is a finding about the model, not a setup failure.

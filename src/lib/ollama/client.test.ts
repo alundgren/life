@@ -24,6 +24,7 @@ describe("callOllama", () => {
   afterEach(() => {
     setModelCallRecorder(undefined);
     resetDb();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -38,6 +39,7 @@ describe("callOllama", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "test-model", prompt: "ping", stream: false }),
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -73,6 +75,7 @@ describe("callOllama", () => {
         stream: false,
         format: "json",
       }),
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -104,6 +107,34 @@ describe("callOllama", () => {
     await expect(callOllama("ping", config)).rejects.toThrow("Ollama request failed: 500 Internal Server Error");
     expect(listRecentModelCalls()[0]).toMatchObject({
       errorPreview: "Ollama request failed: 500 Internal Server Error",
+      status: "error",
+    });
+  });
+
+  it("aborts a hanging request after 180 seconds and records the timeout", async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: RequestInit) => {
+        requestSignal = init.signal as AbortSignal;
+        return new Promise<Response>((_resolve, reject) => {
+          requestSignal!.addEventListener("abort", () => reject(requestSignal!.reason));
+        });
+      })
+    );
+    setModelCallRecorder(createModelCall);
+
+    const call = callOllama("ping", config);
+    const expectedTimeout = expect(call).rejects.toThrow(
+      "Ollama request to http://localhost:11434 timed out after 180 seconds"
+    );
+    await vi.advanceTimersByTimeAsync(180_000);
+
+    await expectedTimeout;
+    expect(requestSignal?.aborted).toBe(true);
+    expect(listRecentModelCalls()[0]).toMatchObject({
+      errorPreview: "Ollama request to http://localhost:11434 timed out after 180 seconds",
       status: "error",
     });
   });

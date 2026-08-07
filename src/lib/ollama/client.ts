@@ -13,6 +13,9 @@ export type ModelCallRecorder = (call: NewModelCall) => number;
 
 let modelCallRecorder: ModelCallRecorder | undefined;
 
+/** Finite ceiling for a Planner Model Call, including a cold Ollama model load. */
+const OLLAMA_REQUEST_TIMEOUT_MS = 180_000;
+
 /** Wires the optional diagnostic recorder without giving this HTTP client a database dependency. */
 export function setModelCallRecorder(recorder: ModelCallRecorder | undefined): void {
   modelCallRecorder = recorder;
@@ -37,6 +40,8 @@ export async function callOllama(
   config: OllamaConfig
 ): Promise<{ response: string; modelCallId: number | undefined }> {
   const startedAt = performance.now();
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), OLLAMA_REQUEST_TIMEOUT_MS);
   try {
     let res: Response;
     try {
@@ -49,6 +54,7 @@ export async function callOllama(
           stream: false,
           ...(config.format === undefined ? {} : { format: config.format }),
         }),
+        signal: abortController.signal,
       });
     } catch (error) {
       // A connection failure surfaces as a bare "fetch failed"; the reason is only in `cause`.
@@ -75,15 +81,20 @@ export async function callOllama(
     });
     return { response: data.response, modelCallId };
   } catch (error) {
+    const errorToRecord = abortController.signal.aborted
+      ? new Error(`Ollama request to ${config.host} timed out after 180 seconds`)
+      : error;
     recordModelCall({
       calledAt: getCurrentTime().toISOString(),
       kind: config.kind,
       model: config.model,
       requestText: prompt,
-      errorText: errorText(error),
+      errorText: errorText(errorToRecord),
       status: "error",
       durationMs: performance.now() - startedAt,
     });
-    throw error;
+    throw errorToRecord;
+  } finally {
+    clearTimeout(timeout);
   }
 }
