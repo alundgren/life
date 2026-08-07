@@ -60,6 +60,8 @@ pnpm test
 
 All three must exit `0` before pushing. `pnpm test` runs the service-free unit suite only — no real SQLite file, Docker, or Ollama instance required.
 
+GitHub Actions runs the same commands for every pull request and each push to `main`. The checks to require in branch protection are `CI / Build`, `CI / Lint`, and `CI / Test`.
+
 ### Integration suite (developer only)
 
 `pnpm test:integration` is a separate suite for tests that need real services — currently the Planner's weekly-plan generation against a real Ollama. It is deliberately **not** part of the verification gate above, and agents must never run it.
