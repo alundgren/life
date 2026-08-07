@@ -16,6 +16,13 @@ import { applyCorrection, hasCorrectionsSince } from "@/lib/db/correction";
 import { getMode, type ModeValue } from "@/lib/db/mode";
 import { listPlannedActivitiesForPlan, type PlannedActivity } from "@/lib/db/plannedActivity";
 import { getPlannerLastCheckedAt, touchPlannerHeartbeat } from "@/lib/db/plannerHeartbeat";
+import {
+  isPlannerRunInFlight as isRunInFlight,
+  isPlannerRunning,
+  releasePlannerRun,
+  setPlannerRunning,
+  tryAcquirePlannerRun,
+} from "@/lib/db/plannerLock";
 import { createPlannerRun, getLatestPlannerRun } from "@/lib/db/plannerRun";
 import {
   listTasks,
@@ -59,8 +66,9 @@ export interface PlannerStatus {
   lastResult: string | null;
 }
 
-let running = false;
-let runInFlight = false;
+// Deliberately instance-local: only the instrumentation module instance's own setInterval
+// loop ever reads or writes this (ADR 0009).
+// eslint-disable-next-line no-restricted-syntax
 let timer: ReturnType<typeof setInterval> | undefined;
 
 /** Starts the background Planner loop: runs immediately, then every intervalMs. */
@@ -68,16 +76,16 @@ export function startPlanner(intervalMs: number = RUN_INTERVAL_MS): void {
   if (isSimulatedClockEnabled()) {
     return;
   }
-  if (running) {
+  if (isPlannerRunning()) {
     return;
   }
-  running = true;
+  setPlannerRunning(true);
   void runPlannerOnce();
   timer = setInterval(() => void runPlannerOnce(), intervalMs);
 }
 
 export function stopPlanner(): void {
-  running = false;
+  setPlannerRunning(false);
   if (timer) {
     clearInterval(timer);
     timer = undefined;
@@ -86,14 +94,14 @@ export function stopPlanner(): void {
 
 /** Whether a Planner run is currently mid-flight, so callers can avoid racing it. */
 export function isPlannerRunInFlight(): boolean {
-  return runInFlight;
+  return isRunInFlight();
 }
 
 export function getPlannerStatus(): PlannerStatus {
   const lastRun = getLatestPlannerRun();
 
   return {
-    running,
+    running: isPlannerRunning(),
     lastCheckedAt: getPlannerLastCheckedAt(),
     lastRunAt: lastRun?.ranAt ?? null,
     lastStatus: lastRun?.status ?? null,
@@ -674,12 +682,11 @@ export interface RunPlannerOptions {
  * is set.
  */
 export async function runPlannerOnce(options: RunPlannerOptions = {}): Promise<void> {
-  if (runInFlight) {
+  if (!tryAcquirePlannerRun()) {
     touchPlannerHeartbeat(getCurrentTime().toISOString());
     return;
   }
 
-  runInFlight = true;
   let extraction: CorrectionExtractionResult = { applied: 0, failedTasks: 0, hadNotes: false };
   let compaction: CompletionCompactionResult = { tasksCompacted: 0, completionsFolded: 0 };
   const recordResult = (status: "ok" | "error", result: string, planWritten = false) => {
@@ -857,6 +864,6 @@ export async function runPlannerOnce(options: RunPlannerOptions = {}): Promise<v
   } catch (error) {
     recordResult("error", error instanceof Error ? error.message : String(error));
   } finally {
-    runInFlight = false;
+    releasePlannerRun();
   }
 }

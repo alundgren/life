@@ -14,6 +14,8 @@ export function createDbClient(filePath: string): Database.Database {
   return db;
 }
 
+// Likely duplicated per module instance (see ADR 0009); not yet confirmed safe or fixed, tracked in #98.
+// eslint-disable-next-line no-restricted-syntax
 let dbInstance: Database.Database | undefined;
 
 /** Lazily creates the app's SQLite singleton from SQLITE_DB_PATH. */
