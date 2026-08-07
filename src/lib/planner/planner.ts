@@ -84,6 +84,11 @@ export function stopPlanner(): void {
   }
 }
 
+/** Whether a Planner run is currently mid-flight, so callers can avoid racing it. */
+export function isPlannerRunInFlight(): boolean {
+  return runInFlight;
+}
+
 export function getPlannerStatus(): PlannerStatus {
   const lastRun = getLatestPlannerRun();
 

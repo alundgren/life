@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { runPlannerOnce } from "@/lib/planner/planner";
-import { isSimulatedClockEnabled } from "@/lib/simulatedClock";
+import { isPlannerRunInFlight, runPlannerOnce } from "@/lib/planner/planner";
 
-/** Runs the Planner by hand while the development-only Simulated Clock is active. */
+/** Runs the Planner by hand, on demand, outside its normal 15-minute schedule. */
 export async function POST() {
-  if (!isSimulatedClockEnabled()) {
-    return NextResponse.json({ error: "The Simulated Clock is not enabled." }, { status: 404 });
+  if (isPlannerRunInFlight()) {
+    return NextResponse.json({ error: "The Planner is already running." }, { status: 409 });
   }
 
   await runPlannerOnce();
