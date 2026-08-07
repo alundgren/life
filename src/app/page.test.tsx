@@ -143,7 +143,7 @@ describe("daily view page", () => {
     expect(await screen.findByRole("button", { name: "Tick off Strength training" })).toBeInTheDocument();
     expect(screen.getByText("16:00-19:00")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Tick off Clean the windows" })).toBeInTheDocument();
-    expect(screen.queryByText(/Clean the windows.*16:00/s)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Clean the windows.*16:00/)).not.toBeInTheDocument();
   });
 
   it("shows the empty-day message while ad-hoc logging remains available", async () => {
