@@ -64,6 +64,10 @@ function timeToMinutes(time: string): number {
   return hours * 60 + minutes;
 }
 
+function formatTimeInput(value: string): string {
+  return /^\d{4}$/.test(value) ? `${value.slice(0, 2)}:${value.slice(2)}` : value;
+}
+
 /** Client-side mirror of the API validation, so obvious mistakes are caught before a round-trip. */
 function validateForm(form: FormState): string | null {
   if (form.description.trim() === "") {
@@ -272,21 +276,27 @@ export default function TasksPage() {
               <label className={labelClass}>
                 Start time
                 <input
-                  type="time"
+                  type="text"
                   value={form.startTime}
-                  onChange={(e) => setForm({ ...form, startTime: e.target.value })}
+                  onChange={(e) => setForm({ ...form, startTime: formatTimeInput(e.target.value) })}
                   className={fieldClass}
                   aria-label="Start time"
+                  inputMode="numeric"
+                  maxLength={5}
+                  placeholder="HH:MM"
                 />
               </label>
               <label className={labelClass}>
                 End time
                 <input
-                  type="time"
+                  type="text"
                   value={form.endTime}
-                  onChange={(e) => setForm({ ...form, endTime: e.target.value })}
+                  onChange={(e) => setForm({ ...form, endTime: formatTimeInput(e.target.value) })}
                   className={fieldClass}
                   aria-label="End time"
+                  inputMode="numeric"
+                  maxLength={5}
+                  placeholder="HH:MM"
                 />
               </label>
             </div>

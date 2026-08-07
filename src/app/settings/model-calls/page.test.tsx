@@ -52,6 +52,21 @@ describe("Model Calls page", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("renders timestamps using a 24-hour clock", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string) =>
+        Promise.resolve(input === "/api/model-calls" ? jsonResponse([preview]) : jsonResponse({ timeZone: "Europe/Stockholm" }))
+      )
+    );
+
+    render(<ModelCallsPage />);
+
+    const row = await screen.findByRole("button", { name: /plan generation/i });
+    expect(row).toHaveTextContent(/\b\d{2}:\d{2}\b/);
+    expect(row).not.toHaveTextContent(/AM|PM/);
+  });
+
   it("explains when an expanded Model Call has been discarded", async () => {
     vi.stubGlobal(
       "fetch",
