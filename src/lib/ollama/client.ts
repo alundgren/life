@@ -11,19 +11,28 @@ export interface OllamaConfig {
 
 export type ModelCallRecorder = (call: NewModelCall) => number;
 
-let modelCallRecorder: ModelCallRecorder | undefined;
+/**
+ * Next.js's standalone build gives the instrumentation hook and route handlers separate module
+ * instances of this file, so a plain module-level variable set by one is invisible to the other.
+ * `globalThis` is the one thing shared across those instances within a single Node process.
+ */
+const RECORDER_KEY = Symbol.for("life.ollama.modelCallRecorder");
+
+interface GlobalWithModelCallRecorder {
+  [RECORDER_KEY]?: ModelCallRecorder;
+}
 
 /** Finite ceiling for a Planner Model Call, including a cold Ollama model load. */
 const OLLAMA_REQUEST_TIMEOUT_MS = 180_000;
 
 /** Wires the optional diagnostic recorder without giving this HTTP client a database dependency. */
 export function setModelCallRecorder(recorder: ModelCallRecorder | undefined): void {
-  modelCallRecorder = recorder;
+  (globalThis as GlobalWithModelCallRecorder)[RECORDER_KEY] = recorder;
 }
 
 function recordModelCall(call: NewModelCall): number | undefined {
   try {
-    return modelCallRecorder?.(call);
+    return (globalThis as GlobalWithModelCallRecorder)[RECORDER_KEY]?.(call);
   } catch {
     // A diagnostic log must never make the LLM call fail.
     return undefined;
