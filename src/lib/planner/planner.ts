@@ -663,11 +663,17 @@ function compactionResultSuffix(result: CompletionCompactionResult): string {
   } folded into Completion Digests.`;
 }
 
+export interface RunPlannerOptions {
+  /** Revises the current week's Weekly Plan even without new Completion or Correction feedback. */
+  force?: boolean;
+}
+
 /**
  * Generates this week's Weekly Plan when none exists. An existing plan is revised only after new
- * Completion or Correction feedback has arrived since the Planner last wrote it.
+ * Completion or Correction feedback has arrived since the Planner last wrote it, unless `force`
+ * is set.
  */
-export async function runPlannerOnce(): Promise<void> {
+export async function runPlannerOnce(options: RunPlannerOptions = {}): Promise<void> {
   if (runInFlight) {
     touchPlannerHeartbeat(getCurrentTime().toISOString());
     return;
@@ -700,7 +706,12 @@ export async function runPlannerOnce(): Promise<void> {
     compaction = await compactCompletions(listTasks());
     const tasks = listTasks();
     const existingPlan = getWeeklyPlanByWeek(weekStart);
-    if (existingPlan && !hasCompletionsSince(existingPlan.revisedAt) && !hasCorrectionsSince(existingPlan.revisedAt)) {
+    if (
+      !options.force &&
+      existingPlan &&
+      !hasCompletionsSince(existingPlan.revisedAt) &&
+      !hasCorrectionsSince(existingPlan.revisedAt)
+    ) {
       recordResult("ok", `Week ${weekStart} already planned.`);
       return;
     }

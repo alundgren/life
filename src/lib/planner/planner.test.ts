@@ -703,6 +703,27 @@ describe("weekly plan generation", () => {
     expect(status.lastCheckedAt).toBe(nextTick.toISOString());
   });
 
+  it("revises an already-planned week when forced, even without new feedback", async () => {
+    const laundry = createLaundry();
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({ activities: [{ taskId: laundry.id, date: "2026-07-30" }] })
+    );
+
+    await runPlannerOnce();
+    const planId = getWeeklyPlanByWeek(WEEK_START)!.id;
+    const nextTick = new Date(2026, 6, 29, 12, 1, 0);
+    vi.setSystemTime(nextTick);
+    callOllamaMock.mockResolvedValue(
+      JSON.stringify({ activities: [{ taskId: laundry.id, date: "2026-08-01" }] })
+    );
+
+    await runPlannerOnce({ force: true });
+
+    expect(callOllamaMock).toHaveBeenCalledTimes(2);
+    const activities = listPlannedActivitiesForPlan(planId);
+    expect(activities.map((activity) => activity.date)).toEqual(["2026-08-01"]);
+  });
+
   it("keeps only the 500 most recent effectful Planner runs", async () => {
     const insertRun = getDb().prepare(
       "INSERT INTO planner_run (ran_at, status, result) VALUES (@ranAt, 'ok', 'earlier run')"
