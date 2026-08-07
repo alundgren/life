@@ -26,9 +26,17 @@ function deferredResponse() {
   return { promise, resolve };
 }
 
+const DEFAULT_SETTINGS: Settings = { mode: "work", budgets: { work: 180, vacation: 600 } };
+
 function stubFetch(
   initial: Settings,
-  options: { failPut?: string; deferPut?: boolean; clock?: Clock } = {}
+  options: {
+    failPut?: string;
+    deferPut?: boolean;
+    clock?: Clock;
+    plannerRunResponse?: { status: number; error?: string };
+    resetResponse?: { status: number; error?: string };
+  } = {}
 ) {
   let stored = initial;
   let clock = options.clock ?? {
@@ -54,7 +62,17 @@ function stubFetch(
       clock = { ...clock, now: next.toISOString(), today: next.toISOString().slice(0, 10) };
       return jsonResponse(clock);
     }
-    if (method === "POST" && input === "/api/planner/run") return new Response(null, { status: 204 });
+    if (method === "POST" && input === "/api/planner/run") {
+      const response = options.plannerRunResponse ?? { status: 204 };
+      if (response.status === 204) return new Response(null, { status: 204 });
+      return jsonResponse({ error: response.error }, response.status);
+    }
+    if (method === "POST" && input === "/api/settings/reset") {
+      const response = options.resetResponse ?? { status: 204 };
+      if (response.status !== 204) return jsonResponse({ error: response.error }, response.status);
+      stored = DEFAULT_SETTINGS;
+      return new Response(null, { status: 204 });
+    }
     if (method === "PUT") {
       if (pending) return pending.promise;
       if (options.failPut) return jsonResponse({ error: options.failPut }, 400);
@@ -195,7 +213,7 @@ describe("Settings page", () => {
     expect(screen.queryByLabelText("Work minutes")).not.toBeInTheDocument();
   });
 
-  it("shows Simulated Clock controls only when the server enables the clock", async () => {
+  it("shows Simulated Clock advance controls only when the server enables the clock", async () => {
     const user = userEvent.setup();
     const { fetchMock } = stubFetch(initialSettings, {
       clock: {
@@ -211,12 +229,81 @@ describe("Settings page", () => {
     await user.click(screen.getByRole("button", { name: "+1 week" }));
     expect(await screen.findByText("Simulated clock advanced by one week.")).toBeInTheDocument();
     expect(screen.getByText("Current simulated date: 2026-08-01")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Run planner now" }));
-    expect(await screen.findByText("Planner run finished.")).toBeInTheDocument();
     expect(fetchMock.mock.calls).toContainEqual([
       "/api/simulated-clock",
       expect.objectContaining({ method: "POST" }),
     ]);
+  });
+
+  it("hides Simulated Clock advance controls when the clock is disabled, but always shows the Planner section", async () => {
+    render(<SettingsPage />);
+
+    await screen.findByRole("button", { name: "Run planner now" });
+    expect(screen.queryByText(/Current simulated date/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+1 day" })).not.toBeInTheDocument();
+  });
+
+  it("triggers a Planner run on demand and reports success", async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = stubFetch(initialSettings);
+    render(<SettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Run planner now" }));
+
+    expect(await screen.findByText("Planner run finished.")).toBeInTheDocument();
     expect(fetchMock.mock.calls).toContainEqual(["/api/planner/run", { method: "POST" }]);
+  });
+
+  it("shows a clear message when the Planner is already running", async () => {
+    const user = userEvent.setup();
+    stubFetch(initialSettings, {
+      plannerRunResponse: { status: 409, error: "The Planner is already running." },
+    });
+    render(<SettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Run planner now" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The Planner is already running.");
+  });
+
+  it("disables the Reset button until the confirm phrase is typed, then wipes data and reloads Settings", async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = stubFetch({ mode: "vacation", budgets: { work: 240, vacation: 900 } });
+    render(<SettingsPage />);
+
+    await screen.findByLabelText("Work minutes");
+    const resetButton = screen.getByRole("button", { name: "Reset all data" });
+    expect(resetButton).toBeDisabled();
+
+    await user.type(screen.getByLabelText('Type "reset" to confirm'), "reset");
+    expect(resetButton).toBeEnabled();
+
+    await user.click(resetButton);
+
+    expect(await screen.findByText("All data has been reset.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls).toContainEqual([
+      "/api/settings/reset",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ confirm: "reset" }),
+      }),
+    ]);
+    expect(screen.getByLabelText("Work minutes")).toHaveValue(180);
+    expect(screen.getByLabelText('Type "reset" to confirm')).toHaveValue("");
+  });
+
+  it("shows a clear message when Reset is rejected", async () => {
+    const user = userEvent.setup();
+    stubFetch(initialSettings, {
+      resetResponse: { status: 409, error: "The Planner is running. Try again shortly." },
+    });
+    render(<SettingsPage />);
+
+    await user.type(await screen.findByLabelText('Type "reset" to confirm'), "reset");
+    await user.click(screen.getByRole("button", { name: "Reset all data" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The Planner is running. Try again shortly."
+    );
   });
 });

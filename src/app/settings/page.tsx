@@ -40,6 +40,9 @@ const primaryButtonClass =
   "min-h-11 rounded-md bg-foreground px-4 py-2 text-base font-medium text-background disabled:opacity-60";
 const secondaryButtonClass =
   "min-h-11 rounded-md border border-muted/40 px-4 py-2 text-base disabled:opacity-60";
+const dangerButtonClass =
+  "min-h-11 rounded-md bg-red-600 px-4 py-2 text-base font-medium text-white disabled:opacity-60";
+const RESET_CONFIRM_PHRASE = "reset";
 
 function budgetFormFromSettings(settings: Settings): BudgetForm {
   return {
@@ -60,9 +63,15 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [savingMode, setSavingMode] = useState(false);
   const [savingBudgets, setSavingBudgets] = useState(false);
-  const [clockAction, setClockAction] = useState<"advance" | "planner" | null>(null);
+  const [clockAction, setClockAction] = useState<"advance" | null>(null);
+  const [plannerRunning, setPlannerRunning] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
+  const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  const anyActionInFlight =
+    savingMode || savingBudgets || clockAction !== null || plannerRunning || resetting;
 
   useEffect(() => {
     Promise.all([fetch("/api/settings"), fetch("/api/simulated-clock")])
@@ -161,15 +170,53 @@ export default function SettingsPage() {
   async function runPlanner() {
     setError(null);
     setMessage(null);
-    setClockAction("planner");
+    setPlannerRunning(true);
     try {
       const response = await fetch("/api/planner/run", { method: "POST" });
-      if (!response.ok) throw new Error("Failed to run the Planner.");
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "Failed to run the Planner.");
+      }
       setMessage("Planner run finished.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to run the Planner.");
     } finally {
-      setClockAction(null);
+      setPlannerRunning(false);
+    }
+  }
+
+  async function resetAllData() {
+    setError(null);
+    setMessage(null);
+    setResetting(true);
+    try {
+      const response = await fetch("/api/settings/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirm: RESET_CONFIRM_PHRASE }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "Failed to reset.");
+      }
+
+      const [settingsResponse, clockResponse] = await Promise.all([
+        fetch("/api/settings"),
+        fetch("/api/simulated-clock"),
+      ]);
+      if (settingsResponse.ok && clockResponse.ok) {
+        const freshSettings = (await settingsResponse.json()) as Settings;
+        setSettings(freshSettings);
+        setBudgetForm(budgetFormFromSettings(freshSettings));
+        setClock((await clockResponse.json()) as Clock);
+      }
+
+      setResetConfirmText("");
+      setMessage("All data has been reset.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset.");
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -203,7 +250,7 @@ export default function SettingsPage() {
                     key={mode.value}
                     type="button"
                     onClick={() => selectMode(mode.value)}
-                    disabled={savingMode || savingBudgets}
+                    disabled={anyActionInFlight}
                     aria-pressed={selected}
                     className={`min-h-24 rounded-md border p-4 text-left disabled:opacity-60 ${
                       selected ? "border-foreground bg-muted/10" : "border-muted/30"
@@ -235,7 +282,7 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={() => advanceClock(1)}
-                  disabled={clockAction !== null || savingMode || savingBudgets}
+                  disabled={anyActionInFlight}
                   className={secondaryButtonClass}
                 >
                   +1 day
@@ -243,22 +290,31 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={() => advanceClock(7)}
-                  disabled={clockAction !== null || savingMode || savingBudgets}
+                  disabled={anyActionInFlight}
                   className={secondaryButtonClass}
                 >
                   +1 week
                 </button>
-                <button
-                  type="button"
-                  onClick={runPlanner}
-                  disabled={clockAction !== null || savingMode || savingBudgets}
-                  className={primaryButtonClass}
-                >
-                  {clockAction === "planner" ? "Running…" : "Run planner now"}
-                </button>
               </div>
             </section>
           )}
+
+          <section>
+            <h2 className="text-lg font-medium">Planner</h2>
+            <p className="mt-3 text-sm text-muted">
+              Triggers a Planner run immediately, outside its normal 15-minute schedule.
+            </p>
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={runPlanner}
+                disabled={anyActionInFlight}
+                className={primaryButtonClass}
+              >
+                {plannerRunning ? "Running…" : "Run planner now"}
+              </button>
+            </div>
+          </section>
 
           <section>
             <h2 className="text-lg font-medium">Weekly Time Budget</h2>
@@ -275,7 +331,7 @@ export default function SettingsPage() {
                       onChange={(e) =>
                         setBudgetForm({ ...budgetForm, [mode.value]: e.target.value })
                       }
-                      disabled={savingMode || savingBudgets}
+                      disabled={anyActionInFlight}
                       className={fieldClass}
                       aria-label={`${mode.label} minutes`}
                     />
@@ -283,10 +339,39 @@ export default function SettingsPage() {
                 ))}
               </div>
 
-              <button type="submit" disabled={savingMode || savingBudgets} className={primaryButtonClass}>
+              <button type="submit" disabled={anyActionInFlight} className={primaryButtonClass}>
                 {savingBudgets ? "Saving…" : "Save Time Budgets"}
               </button>
             </form>
+          </section>
+
+          <section className="rounded-md border border-red-600/40 p-4">
+            <h2 className="text-lg font-medium text-red-600">Danger zone</h2>
+            <p className="mt-1 text-sm text-muted">
+              Wipes every Task, Correction, Completion, Weekly Plan, and diagnostic record, and
+              resets Mode and Time Budgets to their defaults. This cannot be undone.
+            </p>
+            <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
+              <label className="flex flex-col gap-1 text-sm font-medium sm:w-64">
+                Type &quot;{RESET_CONFIRM_PHRASE}&quot; to confirm
+                <input
+                  type="text"
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                  disabled={anyActionInFlight}
+                  className={fieldClass}
+                  aria-label={`Type "${RESET_CONFIRM_PHRASE}" to confirm`}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={resetAllData}
+                disabled={resetConfirmText !== RESET_CONFIRM_PHRASE || anyActionInFlight}
+                className={dangerButtonClass}
+              >
+                {resetting ? "Resetting…" : "Reset all data"}
+              </button>
+            </div>
           </section>
 
           {error && (
