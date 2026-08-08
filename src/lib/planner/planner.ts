@@ -45,6 +45,7 @@ import {
   formatLocalDate,
   getCurrentTime,
   isSimulatedClockEnabled,
+  weekStartForCalendarDate,
 } from "@/lib/simulatedClock";
 
 const RUN_INTERVAL_MS = 15 * 60 * 1000;
@@ -107,11 +108,6 @@ export function getPlannerStatus(): PlannerStatus {
     lastStatus: lastRun?.status ?? null,
     lastResult: lastRun ? lastRun.result : null,
   };
-}
-
-function weekStartForCalendarDate(date: string): string {
-  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
-  return addCalendarDays(date, -((weekday + 6) % 7));
 }
 
 /** The Monday of the week the given moment falls in, in the application timezone. */

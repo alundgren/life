@@ -105,15 +105,21 @@ export function listPlannedActivitiesForPlan(planId: number): PlannedActivity[] 
 
 /** Planned Activities for one calendar date, with timed Scheduled Tasks before day-level Flexible Tasks. */
 export function listPlannedActivitiesForDate(date: string): PlannedActivity[] {
+  return listPlannedActivitiesForDateRange(date, date);
+}
+
+/** Planned Activities in an inclusive date range, with timed Scheduled Tasks before day-level Flexible Tasks. */
+export function listPlannedActivitiesForDateRange(startDate: string, endDate: string): PlannedActivity[] {
   const rows = getDb()
     .prepare(
       `${SELECT_PLANNED_ACTIVITY_SQL}
-       WHERE pa.date = @date
+       WHERE pa.date >= @startDate AND pa.date <= @endDate
        ORDER BY
+         pa.date,
          CASE WHEN ts.start_time IS NULL THEN 1 ELSE 0 END,
          ts.start_time,
          pa.id`
     )
-    .all({ date }) as PlannedActivityRow[];
+    .all({ startDate, endDate }) as PlannedActivityRow[];
   return rows.map(rowToPlannedActivity);
 }
