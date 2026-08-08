@@ -1,4 +1,7 @@
 import { getDb } from "@/lib/db/client";
+import { addCalendarDays } from "@/lib/calendarDate";
+
+export { addCalendarDays, weekStartForCalendarDate } from "@/lib/calendarDate";
 
 interface SimulatedClockRow {
   now: string;
@@ -84,19 +87,6 @@ function instantForZonedDateTime(parts: ZonedDateTimeParts, milliseconds: number
   return candidates
     .filter((value) => compareWallTime(zonedDateTimeParts(value, timeZone), parts) >= 0)
     .sort((left, right) => left.getTime() - right.getTime())[0] ?? candidate;
-}
-
-/** Adds whole days to an ISO calendar date without consulting the host timezone. */
-export function addCalendarDays(date: string, days: number): string {
-  const next = new Date(`${date}T00:00:00.000Z`);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next.toISOString().slice(0, 10);
-}
-
-/** The Monday of the week containing an ISO calendar date. */
-export function weekStartForCalendarDate(date: string): string {
-  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
-  return addCalendarDays(date, -((weekday + 6) % 7));
 }
 
 export function isSimulatedClockEnabled(): boolean {
