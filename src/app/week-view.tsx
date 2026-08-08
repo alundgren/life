@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { addCalendarDays, weekStartForCalendarDate } from "@/lib/calendarDate";
+import { dateForDisplay, dayFormatter, orderedRows, statusLabel, type PlannedActivityStatus } from "./dayEntryDisplay";
 
 type ClockResponse = { today: string; timeZone: string };
 
 type PlannedActivity = {
   id: number;
-  status: "pending" | "done" | "missed";
+  status: PlannedActivityStatus;
   startTime?: string;
   note?: string;
   task: { id: number; kind: "scheduled" | "flexible"; description: string };
@@ -32,39 +33,9 @@ type Week = {
   days: DayEntry[];
 };
 
-const dayFormatter = new Intl.DateTimeFormat("en-GB", {
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-  timeZone: "UTC",
-});
 const dayShortFormatter = new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "UTC" });
 
-function dateForDisplay(date: string): Date {
-  return new Date(`${date}T00:00:00.000Z`);
-}
-
-function statusLabel(status: PlannedActivity["status"]): string {
-  if (status === "done") return "Done";
-  if (status === "missed") return "Missed";
-  return "Pending";
-}
-
-function orderedRows(day: DayEntry) {
-  const plannedActivities = [...day.plannedActivities].sort((left, right) => {
-    if (left.startTime && right.startTime) return left.startTime.localeCompare(right.startTime);
-    if (left.startTime) return -1;
-    if (right.startTime) return 1;
-    return 0;
-  });
-  return [
-    ...plannedActivities.map((activity) => ({ type: "planned" as const, activity })),
-    ...day.adHocCompletions.map((completion) => ({ type: "adHoc" as const, completion })),
-  ];
-}
-
-function Note({ note }: { note: string }) {
+export function Note({ note }: { note: string }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="mt-1">
