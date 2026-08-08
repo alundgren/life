@@ -93,6 +93,12 @@ export function addCalendarDays(date: string, days: number): string {
   return next.toISOString().slice(0, 10);
 }
 
+/** The Monday of the week containing an ISO calendar date. */
+export function weekStartForCalendarDate(date: string): string {
+  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+  return addCalendarDays(date, -((weekday + 6) % 7));
+}
+
 export function isSimulatedClockEnabled(): boolean {
   return process.env.SIMULATED_CLOCK === "true";
 }

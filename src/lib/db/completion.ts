@@ -134,15 +134,29 @@ export function hasCompletionsSince(timestamp: string): boolean {
   return row.exists_since === 1;
 }
 
-/** Completions whose completed dates fall within an inclusive calendar-date range. */
-export function listCompletionsForDateRange(startDate: string, endDate: string): Completion[] {
+/**
+ * Completions whose completed dates fall within an inclusive calendar-date range, plus any
+ * Completions linked to the supplied Planned Activities. The latter keeps a linked note with
+ * its activity when their dates differ.
+ */
+export function listCompletionsForDateRange(
+  startDate: string,
+  endDate: string,
+  plannedActivityIds: number[] = []
+): Completion[] {
+  const activityParameters = Object.fromEntries(
+    plannedActivityIds.map((plannedActivityId, index) => [`plannedActivityId${index}`, plannedActivityId])
+  );
+  const linkedActivityFilter = plannedActivityIds.length
+    ? ` OR planned_activity_id IN (${plannedActivityIds.map((_, index) => `@plannedActivityId${index}`).join(", ")})`
+    : "";
   const rows = getDb()
     .prepare(
       `${SELECT_COMPLETION_SQL}
-       WHERE completed_date >= @startDate AND completed_date <= @endDate
+       WHERE (completed_date >= @startDate AND completed_date <= @endDate${linkedActivityFilter})
        ORDER BY completed_date ASC, id ASC`
     )
-    .all({ startDate, endDate }) as CompletionRow[];
+    .all({ startDate, endDate, ...activityParameters }) as CompletionRow[];
   return rows.map(rowToCompletion);
 }
 
